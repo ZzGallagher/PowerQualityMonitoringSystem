@@ -1,0 +1,98 @@
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor and IDE local state
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Office temporary and lock files
+~$*
+*.tmp
+*.temp
+
+# Logs and runtime output
+*.log
+logs/
+*.pid
+*.seed
+
+# Environment variables, secrets, and local-only config
+.env
+.env.*
+!.env.example
+*.local
+*.secret
+secrets/
+
+# Dependency directories
+node_modules/
+vendor/
+
+# Build and distribution output
+build/
+dist/
+out/
+target/
+bin/
+obj/
+Debug/
+Release/
+x64/
+x86/
+
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# JavaScript package manager caches
+.npm/
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+
+# Java and JVM build output
+*.class
+*.jar
+*.war
+*.ear
+.gradle/
+
+# .NET build and package output
+*.nupkg
+packages/
+
+# C/C++ build artifacts
+*.o
+*.obj
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.lib
+
+# Coverage, reports, and generated documentation
+coverage/
+htmlcov/
+reports/
+site/
+
+# Database and local data files
+*.db
+*.sqlite
+*.sqlite3
+data/
+
