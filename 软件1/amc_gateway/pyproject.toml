@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "amc-gateway"
+version = "0.1.0"
+description = "AMC采集处理与数据打包软件演示网关"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+serial = ["pyserial>=3.5"]
+
+[project.scripts]
+amc-gateway = "amc_gateway.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+

@@ -1,0 +1,75 @@
+{
+  "pointTablePath": "../AMC-E4KC点表-v1.json",
+  "mode": "serial",
+  "station": {
+    "id": "substation-001",
+    "name": "演示变电站"
+  },
+  "gateway": {
+    "id": "gateway-001",
+    "name": "笔记本网关"
+  },
+  "buses": [
+    {
+      "id": "rs485-1",
+      "type": "modbus_rtu",
+      "port": "COM3",
+      "baudRate": 9600,
+      "parity": "N",
+      "dataBits": 8,
+      "stopBits": 1,
+      "timeoutMs": 1200
+    }
+  ],
+  "meters": [
+    {
+      "id": "amc-001",
+      "name": "AMC智能电表1",
+      "model": "AMC(II)-E4KC",
+      "enabled": true,
+      "busId": "rs485-1",
+      "slaveId": 8
+    }
+  ],
+  "collection": {
+    "pollIntervalSeconds": 2,
+    "uploadIntervalSeconds": 3,
+    "statisticsWindowSeconds": 3
+  },
+  "receiver": {
+    "baseUrl": "http://127.0.0.1:8000",
+    "ingestPath": "/api/ingest/packets",
+    "healthPath": "/api/ingest/health",
+    "testPath": "/api/ingest/test",
+    "token": "",
+    "timeoutSeconds": 3,
+    "retryAttempts": 2
+  },
+  "cache": {
+    "sqlitePath": "runtime/cache.db",
+    "maxPackets": 5000
+  },
+  "logging": {
+    "file": "runtime/gateway.log",
+    "level": "INFO"
+  },
+  "thresholds": {
+    "ua": { "min": 198.0, "max": 235.4, "severity": "critical", "basis": "GB/T 12325-2008 220V +7%/-10%" },
+    "ub": { "min": 198.0, "max": 235.4, "severity": "critical", "basis": "GB/T 12325-2008 220V +7%/-10%" },
+    "uc": { "min": 198.0, "max": 235.4, "severity": "critical", "basis": "GB/T 12325-2008 220V +7%/-10%" },
+    "uab": { "min": 353.4, "max": 406.6, "severity": "critical", "basis": "GB/T 12325-2008 380V +/-7%" },
+    "ubc": { "min": 353.4, "max": 406.6, "severity": "critical", "basis": "GB/T 12325-2008 380V +/-7%" },
+    "uac": { "min": 353.4, "max": 406.6, "severity": "critical", "basis": "GB/T 12325-2008 380V +/-7%" },
+    "ia": { "max": 5.5, "severity": "warning", "basis": "二次侧5A CT演示阈值，现场应按CT变比和回路额定电流调整" },
+    "ib": { "max": 5.5, "severity": "warning", "basis": "二次侧5A CT演示阈值，现场应按CT变比和回路额定电流调整" },
+    "ic": { "max": 5.5, "severity": "warning", "basis": "二次侧5A CT演示阈值，现场应按CT变比和回路额定电流调整" },
+    "i0": { "max": 0.5, "severity": "warning", "basis": "演示零序电流阈值，现场应按接地系统和保护定值调整" },
+    "frequency": { "min": 49.8, "max": 50.2, "severity": "critical", "basis": "GB/T 15945-2008 正常运行±0.2Hz" },
+    "voltage_unbalance": { "max": 4.0, "severity": "critical", "basis": "GB/T 15543-2008 短时最大值" },
+    "current_unbalance": { "max": 30.0, "severity": "warning", "basis": "演示运行阈值，国家电能质量标准未给出通用电流不平衡限值" },
+    "pfa": { "min": 0.9, "severity": "warning", "basis": "项目运行阈值，参考功率因数考核0.90档" },
+    "pfb": { "min": 0.9, "severity": "warning", "basis": "项目运行阈值，参考功率因数考核0.90档" },
+    "pfc": { "min": 0.9, "severity": "warning", "basis": "项目运行阈值，参考功率因数考核0.90档" },
+    "pf_total": { "min": 0.9, "severity": "warning", "basis": "项目运行阈值，参考功率因数考核0.90档" }
+  }
+}
