@@ -41,13 +41,7 @@ PREFERRED_POINT_NAMES: dict[str, str] = {
     "angle_uc": "电压UC相角",
     "voltage_unbalance": "电压不平衡度",
     "current_unbalance": "电流不平衡度",
-    "dido_status": "开关量输入输出状态",
-    "thd_ua": "A相电压总谐波畸变率",
-    "thd_ub": "B相电压总谐波畸变率",
-    "thd_uc": "C相电压总谐波畸变率",
-    "thd_ia": "A相电流总谐波畸变率",
-    "thd_ib": "B相电流总谐波畸变率",
-    "thd_ic": "C相电流总谐波畸变率",
+    "switch_status": "DI1开关量状态",
 }
 
 
@@ -128,4 +122,3 @@ def _parse_hex(value: str | int) -> int:
         return value
     text = str(value).strip().upper().replace("H", "")
     return int(text, 16)
-

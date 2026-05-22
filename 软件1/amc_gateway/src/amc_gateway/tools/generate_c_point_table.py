@@ -14,7 +14,8 @@ def generate_c_point_table(point_table_path: str | Path) -> str:
         "typedef enum {",
         "    AMC_UINT16,",
         "    AMC_INT16,",
-        "    AMC_UINT32_BE",
+        "    AMC_UINT32_BE,",
+        "    AMC_DI1_STATUS",
         "} amc_data_type_t;",
         "",
         "typedef struct {",
@@ -39,6 +40,7 @@ def generate_c_point_table(point_table_path: str | Path) -> str:
             "uint16": "AMC_UINT16",
             "int16": "AMC_INT16",
             "uint32_be": "AMC_UINT32_BE",
+            "di1_status": "AMC_DI1_STATUS",
         }.get(point.data_type, "AMC_UINT16")
         enabled = 1 if point.enabled else 0
         lines.append(

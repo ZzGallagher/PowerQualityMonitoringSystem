@@ -8,7 +8,7 @@
   },
   "readProfile": {
     "name": "secondary-first",
-    "description": "第一版演示优先读取二次侧寄存器；谐波寄存器进入字典但默认不采集。",
+    "description": "第一版演示优先读取二次侧寄存器；AMC 当前不采集谐波相关数据。",
     "defaultSlaveId": 1,
     "defaultBaudRate": 9600,
     "defaultParity": "Even",
@@ -18,17 +18,16 @@
   },
   "qualityDefaults": {
     "enabledPoints": "good|stale|timeout|crc_error|parse_error|out_of_range",
-    "harmonicsPlaceholders": "unsupported",
     "notConnectedObjects": "not_connected"
   },
   "readBlocks": [
     {
-      "id": "dido_status",
+      "id": "switch_status",
       "startAddressHex": "0022",
       "quantity": 1,
       "enabledInV1": true,
       "points": [
-        "dido_status"
+        "switch_status"
       ]
     },
     {
@@ -96,35 +95,20 @@
         "voltage_unbalance",
         "current_unbalance"
       ]
-    },
-    {
-      "id": "harmonics_thd_placeholder",
-      "startAddressHex": "0400",
-      "quantity": 6,
-      "enabledInV1": false,
-      "defaultQuality": "unsupported",
-      "points": [
-        "thd_ua",
-        "thd_ub",
-        "thd_uc",
-        "thd_ia",
-        "thd_ib",
-        "thd_ic"
-      ]
     }
   ],
   "points": [
     {
-      "code": "dido_status",
-      "name": "开关量输入输出状态",
+      "code": "switch_status",
+      "name": "DI1开关量状态",
       "addressHex": "0022",
       "length": 1,
-      "dataType": "uint16",
+      "dataType": "di1_status",
       "scale": 1,
       "unit": "",
-      "access": "R/W",
+      "access": "R",
       "enabledInV1": true,
-      "notes": "仅读取，不写入。位定义：DO2、DO1、DI4、DI3、DI2、DI1，其余保留。"
+      "notes": "仅接 DI1。0022H 第9位为 DI1，1=通路，0=断路；rawValue 保留 0022H 原始寄存器值。"
     },
     {
       "code": "ep_import",
@@ -501,78 +485,6 @@
       "unit": "%",
       "access": "R",
       "enabledInV1": true
-    },
-    {
-      "code": "thd_ua",
-      "name": "A相电压总谐波畸变率",
-      "addressHex": "0400",
-      "length": 1,
-      "dataType": "uint16",
-      "scale": 0.01,
-      "unit": "%",
-      "access": "R",
-      "enabledInV1": false,
-      "defaultQuality": "unsupported"
-    },
-    {
-      "code": "thd_ub",
-      "name": "B相电压总谐波畸变率",
-      "addressHex": "0401",
-      "length": 1,
-      "dataType": "uint16",
-      "scale": 0.01,
-      "unit": "%",
-      "access": "R",
-      "enabledInV1": false,
-      "defaultQuality": "unsupported"
-    },
-    {
-      "code": "thd_uc",
-      "name": "C相电压总谐波畸变率",
-      "addressHex": "0402",
-      "length": 1,
-      "dataType": "uint16",
-      "scale": 0.01,
-      "unit": "%",
-      "access": "R",
-      "enabledInV1": false,
-      "defaultQuality": "unsupported"
-    },
-    {
-      "code": "thd_ia",
-      "name": "A相电流总谐波畸变率",
-      "addressHex": "0403",
-      "length": 1,
-      "dataType": "uint16",
-      "scale": 0.01,
-      "unit": "%",
-      "access": "R",
-      "enabledInV1": false,
-      "defaultQuality": "unsupported"
-    },
-    {
-      "code": "thd_ib",
-      "name": "B相电流总谐波畸变率",
-      "addressHex": "0404",
-      "length": 1,
-      "dataType": "uint16",
-      "scale": 0.01,
-      "unit": "%",
-      "access": "R",
-      "enabledInV1": false,
-      "defaultQuality": "unsupported"
-    },
-    {
-      "code": "thd_ic",
-      "name": "C相电流总谐波畸变率",
-      "addressHex": "0405",
-      "length": 1,
-      "dataType": "uint16",
-      "scale": 0.01,
-      "unit": "%",
-      "access": "R",
-      "enabledInV1": false,
-      "defaultQuality": "unsupported"
     }
   ],
   "packetPointOrder": [
@@ -610,6 +522,6 @@
     "angle_uc",
     "voltage_unbalance",
     "current_unbalance",
-    "dido_status"
+    "switch_status"
   ]
 }

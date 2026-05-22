@@ -4,8 +4,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from .config import load_config
-from .gui import run_gui
+from amc_gateway.config import load_config
+from amc_gateway.gui import run_gui
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -15,7 +15,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--slave-id", type=int, help="override first meter Modbus slave id")
     args = parser.parse_args(argv)
 
-    from .cli import _apply_overrides
+    from amc_gateway.cli import _apply_overrides
 
     config = load_config(args.config or _default_config_path())
     config = _apply_overrides(config, args)

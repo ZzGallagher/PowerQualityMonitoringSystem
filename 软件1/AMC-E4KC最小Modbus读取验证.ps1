@@ -204,8 +204,9 @@ try {
     Write-Host ("current_unbalance  电流不平衡度 raw={0} value={1} %" -f $unbalanceRegs[1], ([double]$unbalanceRegs[1] / 10.0))
 
     $didoRegs = Invoke-ModbusRead -Port $port -Slave $SlaveId -StartAddress 0x0022 -Quantity 1
+    $switchStatus = if (($didoRegs[0] -band 0x0100) -ne 0) { 1 } else { 0 }
     Write-Host ""
-    Write-Host ("dido_status        开关量输入输出状态 raw=0x{0:X4}" -f $didoRegs[0])
+    Write-Host ("switch_status      DI1开关量状态 raw=0x{0:X4} value={1}" -f $didoRegs[0], $switchStatus)
 }
 finally {
     if ($port.IsOpen) {

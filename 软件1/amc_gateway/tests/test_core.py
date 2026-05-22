@@ -76,7 +76,7 @@ class DecoderTests(unittest.TestCase):
                 "secondary_energy_import": [0, 1000],
                 "voltage_angles": [0, 1200, 2400],
                 "unbalance": [10, 20],
-                "dido_status": [3],
+                "switch_status": [0x0100],
             },
             datetime(2026, 5, 21, 14, 30, tzinfo=timezone.utc),
         )
@@ -84,8 +84,24 @@ class DecoderTests(unittest.TestCase):
         self.assertEqual(by_code["ua"].value, 232.2)
         self.assertEqual(by_code["frequency"].value, 49.98)
         self.assertEqual(by_code["ep_import"].value, 1)
-        self.assertEqual(by_code["dido_status"].raw_value, 3)
-        self.assertEqual(by_code["thd_ua"].quality, "unsupported")
+        self.assertEqual(by_code["switch_status"].value, 1)
+        self.assertEqual(by_code["switch_status"].raw_value, 0x0100)
+        self.assertNotIn("dido_status", by_code)
+        self.assertFalse(any(code.startswith("thd_") for code in by_code))
+
+    def test_di1_switch_status_decodes_closed_and_open(self) -> None:
+        table = load_point_table(POINT_TABLE)
+        timestamp = datetime(2026, 5, 21, 14, 30, tzinfo=timezone.utc)
+
+        closed = decode_points(table, {"switch_status": [0x0100]}, timestamp)
+        open_ = decode_points(table, {"switch_status": [0x0000]}, timestamp)
+
+        closed_by_code = {point.code: point for point in closed}
+        open_by_code = {point.code: point for point in open_}
+        self.assertEqual(closed_by_code["switch_status"].value, 1)
+        self.assertEqual(closed_by_code["switch_status"].raw_value, 0x0100)
+        self.assertEqual(open_by_code["switch_status"].value, 0)
+        self.assertEqual(open_by_code["switch_status"].raw_value, 0x0000)
 
     def test_decode_single_phase_modscan_registers_keeps_unwired_phases_zero(self) -> None:
         table = load_point_table(POINT_TABLE)
@@ -127,7 +143,7 @@ class DecoderTests(unittest.TestCase):
                 "secondary_energy_import": [0, 0],
                 "voltage_angles": [0, 0, 0],
                 "unbalance": [0, 0],
-                "dido_status": [0],
+                "switch_status": [0],
             },
             timestamp,
         )
@@ -168,6 +184,9 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("ua", by_code)
         self.assertEqual(by_code["ua"].unit, "V")
         self.assertEqual(by_code["ua"].quality, "simulated")
+        self.assertIn("switch_status", by_code)
+        self.assertIn(by_code["switch_status"].value, {0, 1})
+        self.assertFalse(any(code.startswith("thd_") for code in by_code))
 
 
 class ProcessingTests(unittest.TestCase):

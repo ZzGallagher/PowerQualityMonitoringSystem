@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>软件2 - 低压组态监测</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主导航">
+        <div class="brand">
+          <span class="brand-mark"></span>
+          <div>
+            <strong>站级前端</strong>
+            <span>演示变电站</span>
+          </div>
+        </div>
+        <nav id="navList" class="nav-list"></nav>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">软件2 · 单站低压侧</p>
+            <h1 id="pageTitle">低压组态监测</h1>
+          </div>
+          <div class="topbar-status">
+            <span class="status-pill online">软件1在线</span>
+            <span class="status-pill">刷新 <span id="refreshTime">--:--:--</span></span>
+          </div>
+        </header>
+
+        <section id="overviewPage" class="page page-active">
+          <div class="summary-strip" aria-label="运行摘要">
+            <article>
+              <span>低压柜</span>
+              <strong>AA0-AA11</strong>
+            </article>
+            <article>
+              <span>内部回路</span>
+              <strong id="circuitCount">--</strong>
+            </article>
+            <article>
+              <span>真实采集</span>
+              <strong id="boundCount">--</strong>
+            </article>
+            <article>
+              <span>未接入</span>
+              <strong id="unboundCount">--</strong>
+            </article>
+          </div>
+
+          <div class="topology-panel">
+            <div class="panel-toolbar">
+              <div>
+                <strong>低压侧一次组态图</strong>
+                <span>双击任一回路查看实时信息</span>
+              </div>
+              <div class="toolbar-actions">
+                <div class="zoom-controls" aria-label="组态图缩放">
+                  <button id="zoomOutButton" class="tool-button" type="button" title="缩小">−</button>
+                  <span id="zoomValue" class="zoom-value">100%</span>
+                  <button id="zoomInButton" class="tool-button" type="button" title="放大">+</button>
+                  <button id="zoomFitButton" class="tool-button fit-button" type="button" title="适应宽度">适屏</button>
+                </div>
+              </div>
+            </div>
+
+            <div id="topologyStage" class="topology-stage">
+              <div id="topologyCanvas" class="topology-canvas">
+                <div id="topologySvgHost" class="topology-svg-host" aria-label="低压侧组态图"></div>
+                <div id="currentLayer" class="current-layer" aria-label="三相电流实时数据层"></div>
+                <div id="hotspotLayer" class="hotspot-layer" aria-label="回路交互层"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="placeholderPage" class="page">
+          <div class="placeholder-card">
+            <h2 id="placeholderTitle"></h2>
+            <p id="placeholderBody"></p>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="circuitDialog" class="circuit-dialog">
+      <form method="dialog">
+        <button class="icon-button close-button" value="close" aria-label="关闭">×</button>
+      </form>
+      <div id="dialogContent"></div>
+    </dialog>
+
+    <script src="./topology-config.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

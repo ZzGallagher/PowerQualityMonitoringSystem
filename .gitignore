@@ -58,6 +58,7 @@ env/
 
 # JavaScript package manager caches
 .npm/
+.npm-cache/
 .pnpm-store/
 .yarn/cache/
 .yarn/unplugged/

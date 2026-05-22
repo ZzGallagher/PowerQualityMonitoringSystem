@@ -30,9 +30,6 @@ DEFAULT_THRESHOLDS: dict[str, dict[str, float | str]] = {
     "pfa": {"min": 0.9, "severity": "warning", "basis": "phase power factor operational threshold"},
     "pfb": {"min": 0.9, "severity": "warning", "basis": "phase power factor operational threshold"},
     "pfc": {"min": 0.9, "severity": "warning", "basis": "phase power factor operational threshold"},
-    "thd_ua": {"max": 4.0, "severity": "warning", "basis": "GB/T 14549-1993 0.38kV voltage THD"},
-    "thd_ub": {"max": 4.0, "severity": "warning", "basis": "GB/T 14549-1993 0.38kV voltage THD"},
-    "thd_uc": {"max": 4.0, "severity": "warning", "basis": "GB/T 14549-1993 0.38kV voltage THD"},
 }
 
 

@@ -51,8 +51,7 @@ def decode_points(
             decoded[code] = _unsupported_point(point, timestamp_text)
             continue
         try:
-            raw_value = _decode_raw(point, register_map)
-            value = raw_value * point.scale
+            raw_value, value = _decode_point_value(point, register_map)
             point_quality = _range_quality(point, value, default_quality)
             decoded[code] = PointValue(
                 code=point.code,
@@ -97,6 +96,15 @@ def _build_register_map(table: PointTable, block_registers: dict[str, list[int]]
 def _decode_raw(point: PointDefinition, register_map: dict[int, int]) -> int:
     registers = [register_map[point.address + offset] for offset in range(point.length)]
     return decode_register_value(point, registers)
+
+
+def _decode_point_value(point: PointDefinition, register_map: dict[int, int]) -> tuple[int, float | int]:
+    registers = [register_map[point.address + offset] for offset in range(point.length)]
+    if point.data_type == "di1_status":
+        raw_register = registers[0]
+        return raw_register, 1 if raw_register & 0x0100 else 0
+    raw_value = decode_register_value(point, registers)
+    return raw_value, raw_value * point.scale
 
 
 def _unsupported_point(point: PointDefinition, timestamp_text: str) -> PointValue:
@@ -144,8 +152,10 @@ def _reasonable_bounds(code: str) -> tuple[float, float] | None:
         return (45, 65)
     if code in {"pfa", "pfb", "pfc", "pf_total"}:
         return (-1, 1)
-    if code in {"voltage_unbalance", "current_unbalance", "thd_ua", "thd_ub", "thd_uc", "thd_ia", "thd_ib", "thd_ic"}:
+    if code in {"voltage_unbalance", "current_unbalance"}:
         return (0, 100)
+    if code == "switch_status":
+        return (0, 1)
     if code in {"angle_ua", "angle_ub", "angle_uc"}:
         return (0, 360)
     if code == "ep_import":

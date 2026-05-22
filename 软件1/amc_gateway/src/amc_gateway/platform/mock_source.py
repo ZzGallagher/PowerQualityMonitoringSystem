@@ -15,7 +15,7 @@ class MockSource:
         phase = time.monotonic() - self._start
         secondary = _secondary_registers(phase)
         return {
-            "dido_status": [0x0003 if int(phase) % 10 < 5 else 0x0001],
+            "switch_status": [0x0100 if int(phase) % 10 < 5 else 0x0000],
             "secondary_energy_import": [0x0000, 123456 + int(phase)],
             "voltage_angles": [0, 1200, 2400],
             "secondary_electrical_measurements": secondary,
