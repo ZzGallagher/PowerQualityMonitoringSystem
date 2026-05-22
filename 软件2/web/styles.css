@@ -140,10 +140,30 @@ h1 {
   font-size: 13px;
 }
 
+.collector-status {
+  gap: 7px;
+}
+
+.collector-status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 16%, transparent);
+  flex: 0 0 auto;
+}
+
 .status-pill.online {
   border-color: rgba(22, 131, 79, 0.25);
   background: rgba(22, 131, 79, 0.1);
   color: var(--good);
+}
+
+.status-pill.offline {
+  border-color: rgba(194, 65, 12, 0.25);
+  background: rgba(194, 65, 12, 0.1);
+  color: var(--danger);
 }
 
 .page {

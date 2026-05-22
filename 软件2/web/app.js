@@ -61,6 +61,7 @@ function buildCircuits() {
 }
 
 async function init() {
+  initCollectorStatusIndicator();
   renderNavigation();
   renderSummary();
   await loadTopologySvg();
@@ -72,6 +73,24 @@ async function init() {
   setInterval(tickRealtime, 2000);
   setInterval(refreshTopologyState, 2000);
   setInterval(refreshRealtimeState, 2000);
+}
+
+function initCollectorStatusIndicator() {
+  const status = document.querySelector("#collectorStatus");
+  if (!status) return;
+
+  const syncStatusClass = () => {
+    const isOffline = status.textContent.includes("离线");
+    status.classList.toggle("offline", isOffline);
+    status.classList.toggle("online", !isOffline);
+  };
+
+  syncStatusClass();
+  new MutationObserver(syncStatusClass).observe(status, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+  });
 }
 
 function renderNavigation() {
@@ -478,12 +497,30 @@ function selectCircuit(circuitId) {
   });
 }
 
+function formatBeijingDateTime(date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  })
+    .formatToParts(date)
+    .reduce((result, part) => {
+      result[part.type] = part.value;
+      return result;
+    }, {});
+
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
 function tickRealtime() {
   realtimeSeed += 1;
   const now = new Date();
-  document.querySelector("#refreshTime").textContent = now.toLocaleTimeString("zh-CN", {
-    hour12: false,
-  });
+  document.querySelector("#refreshTime").textContent = formatBeijingDateTime(now);
 
   const dialog = document.querySelector("#circuitDialog");
   if (dialog.open && selectedCircuitId) {

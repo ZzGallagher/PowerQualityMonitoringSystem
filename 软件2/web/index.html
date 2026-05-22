@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>软件2 - 低压组态监测</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260522-status" />
   </head>
   <body>
     <div class="app-shell">
@@ -26,8 +26,8 @@
             <h1 id="pageTitle">低压组态监测</h1>
           </div>
           <div class="topbar-status">
-            <span class="status-pill online">软件1在线</span>
-            <span class="status-pill">刷新 <span id="refreshTime">--:--:--</span></span>
+            <span id="collectorStatus" class="status-pill collector-status online">数据采集软件在线</span>
+            <span class="status-pill"><span id="refreshTime">0000-00-00 --:--:--</span></span>
           </div>
         </header>
 
@@ -94,6 +94,6 @@
     </dialog>
 
     <script src="./topology-config.js"></script>
-    <script src="./app.js"></script>
+    <script src="./app.js?v=20260522-status"></script>
   </body>
 </html>
