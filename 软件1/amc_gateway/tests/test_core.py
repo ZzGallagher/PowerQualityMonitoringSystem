@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import random
 import unittest
 
 from amc_gateway.acquisition import sample_enabled_meters
@@ -13,6 +14,7 @@ from amc_gateway.core.modbus import append_crc, build_read_holding_registers_req
 from amc_gateway.core.point_table import load_point_table
 from amc_gateway.core.processing import DataProcessor
 from amc_gateway.gui import GuiRuntimeController
+from amc_gateway.platform.mock_source import MockSource
 from amc_gateway.platform.sender import SendResult
 from amc_gateway.platform.serial_rtu import SerialTimeoutError
 
@@ -189,6 +191,31 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(any(code.startswith("thd_") for code in by_code))
 
 
+class MockSourceTests(unittest.TestCase):
+    def test_mock_source_randomizes_normal_samples_and_injects_periodic_limit(self) -> None:
+        table = load_point_table(POINT_TABLE)
+        clock = _FakeClock()
+        source = MockSource(table, limit_interval_seconds=10, clock=clock, rng=random.Random(9))
+        timestamp = datetime(2026, 5, 21, 14, 30, tzinfo=timezone.utc)
+        processor = DataProcessor({})
+
+        first = decode_points(table, source.read_all_blocks(), timestamp, default_quality="simulated")
+        second = decode_points(table, source.read_all_blocks(), timestamp, default_quality="simulated")
+        first_by_code = {point.code: point for point in first}
+        second_by_code = {point.code: point for point in second}
+        normal = processor.process(first, timestamp)
+
+        self.assertEqual(normal.alarms, [])
+        self.assertNotEqual(first_by_code["ua"].value, second_by_code["ua"].value)
+        clock.advance(10)
+
+        limited = decode_points(table, source.read_all_blocks(), timestamp, default_quality="simulated")
+        result = processor.process(limited, timestamp)
+        active_alarms = [alarm for alarm in result.alarms if alarm["state"] == "active"]
+
+        self.assertEqual(len(active_alarms), 1)
+
+
 class ProcessingTests(unittest.TestCase):
     def test_energy_delta_and_rate_are_derived_from_cumulative_energy(self) -> None:
         processor = DataProcessor({})
@@ -353,6 +380,17 @@ def _two_meter_config(tmp_path: Path, thresholds: dict[str, dict[str, float]] | 
 
 def _read_blocks_from_mock_source(runtime):
     return runtime.mock_source.read_all_blocks(), []
+
+
+class _FakeClock:
+    def __init__(self) -> None:
+        self.value = 0.0
+
+    def __call__(self) -> float:
+        return self.value
+
+    def advance(self, seconds: float) -> None:
+        self.value += seconds
 
 
 class _RecordingSender:

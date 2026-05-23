@@ -64,14 +64,14 @@ class GatewayService:
         self.packet_factory = PacketFactory(config.station, config.gateway, config.meter)
         self.stats = StatsWindow()
         self.processor = DataProcessor(config.thresholds)
+        self.mock_source = MockSource(self.table)
         self._online = True
 
     def read_once(self, mode: str | None = None) -> tuple[list[PointValue], dict[str, object], list[dict[str, object]]]:
         mode = (mode or self.config.mode).lower()
         timestamp = datetime.now().astimezone()
         if mode == "mock":
-            source = MockSource(self.table)
-            blocks = source.read_all_blocks()
+            blocks = self.mock_source.read_all_blocks()
             points = self._process_points(decode_points(self.table, blocks, timestamp, default_quality=quality.SIMULATED), timestamp)
             return points.points, self.packet_factory.realtime(points.points, timestamp), points.alarms
 

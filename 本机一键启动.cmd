@@ -54,22 +54,26 @@ if errorlevel 1 (
   echo.
 )
 
-echo [1/3] Starting Software2 backend: http://127.0.0.1:8000
-start "Software2 Backend - 8000" cmd /k "cd /d ""%BACKEND_DIR%"" && npm run init-db && npm start"
+echo [1/4] Starting database ingest service: http://127.0.0.1:9000
+start "Database Ingest - 9000" cmd /k "cd /d ""%BACKEND_DIR%"" && npm run init-db && npm run start:ingest"
 
-echo Waiting for backend initialization...
+echo Waiting for database ingest initialization...
 timeout /t 4 /nobreak >nul
 
-echo [2/3] Starting Software2 frontend: http://127.0.0.1:8080
+echo [2/4] Starting Software2 backend read API: http://127.0.0.1:8000
+start "Software2 Backend Read API - 8000" cmd /k "cd /d ""%BACKEND_DIR%"" && npm start"
+
+echo [3/4] Starting Software2 frontend: http://127.0.0.1:8080
 start "Software2 Frontend - 8080" cmd /k "cd /d ""%WEB_DIR%"" && python -m http.server 8080"
 
-echo [3/3] Starting Software1 acquisition: %MODE%
+echo [4/4] Starting Software1 acquisition: %MODE%
 start "Software1 Acquisition - %MODE%" cmd /k "cd /d ""%GATEWAY_DIR%"" && set PYTHONPATH=.\src&& python -m amc_gateway run --config meter_config.example.json --mode %MODE%"
 
 echo.
-echo Three service windows have been opened.
+echo Four service windows have been opened.
 echo Frontend:       http://127.0.0.1:8080
-echo Backend health: http://127.0.0.1:8000/api/ingest/health
+echo Ingest health:  http://127.0.0.1:9000/api/ingest/health
+echo Backend health: http://127.0.0.1:8000/api/health
 echo.
 echo Use mock mode:   "%~nx0" mock
 echo Use serial mode: "%~nx0" serial

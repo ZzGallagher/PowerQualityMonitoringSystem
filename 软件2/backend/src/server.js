@@ -1,31 +1,19 @@
 const express = require("express");
 const cors = require("cors");
 const { config } = require("./config");
-const { closePool, query, withTransaction } = require("./db");
-const { initializeDatabase } = require("./init-db");
-const { ingestPacket } = require("./ingest");
+const { closePool, query } = require("./db");
 
 const app = express();
 
 app.use(cors({ origin: config.corsOrigin === "*" ? "*" : config.corsOrigin.split(",") }));
 app.use(express.json({ limit: "1mb" }));
 
-app.get("/api/ingest/health", async (_req, res) => {
+app.get(["/api/health", "/api/ingest/health"], async (_req, res) => {
   try {
     await query("SELECT 1");
-    res.json({ ok: true, service: "software2-backend", database: "postgres" });
+    res.json({ ok: true, service: "software2-backend-readonly", database: "postgres" });
   } catch (error) {
     res.status(503).json({ ok: false, error: "database unavailable" });
-  }
-});
-
-app.post(["/api/ingest/packets", "/api/ingest/test"], requireIngestToken, async (req, res) => {
-  try {
-    const packetId = await withTransaction((client) => ingestPacket(client, req.body));
-    res.json({ ok: true, packetId });
-  } catch (error) {
-    const status = String(error.message || "").startsWith("unsupported") || String(error.message || "").includes("required") ? 400 : 500;
-    res.status(status).json({ ok: false, error: status === 400 ? error.message : "ingest failed" });
   }
 });
 
@@ -122,12 +110,71 @@ app.get("/api/realtime", async (req, res) => {
 
 app.get("/api/history", async (req, res) => {
   const meterId = String(req.query.meterId || "");
-  const pointCode = String(req.query.pointCode || "");
-  if (!meterId || !pointCode) {
-    res.status(400).json({ ok: false, error: "meterId and pointCode are required" });
+  const pointCode = req.query.pointCode ? String(req.query.pointCode) : "";
+  const pointCodes = String(req.query.pointCodes || "")
+    .split(",")
+    .map((code) => code.trim())
+    .filter(Boolean);
+
+  if (!meterId) {
+    res.status(400).json({ ok: false, error: "meterId is required" });
     return;
   }
-  const limit = Math.min(Number(req.query.limit || 500), 5000);
+
+  if (pointCodes.length > 0) {
+    const startTime = parseHistoryDate(req.query.startTime);
+    const endTime = parseHistoryDate(req.query.endTime);
+    if (!startTime || !endTime || startTime >= endTime) {
+      res.status(400).json({ ok: false, error: "valid startTime and endTime are required" });
+      return;
+    }
+
+    const limitPerPoint = boundedNumber(req.query.limitPerPoint, 1000, 1, 5000);
+    const result = await query(
+      `
+      WITH ranked AS (
+        SELECT
+          point_code,
+          name,
+          sample_time,
+          value,
+          raw_value,
+          unit,
+          quality,
+          row_number() OVER (PARTITION BY point_code ORDER BY sample_time DESC) AS row_index
+        FROM history_sample
+        WHERE meter_id = $1
+          AND point_code = ANY($2)
+          AND sample_time >= $3
+          AND sample_time <= $4
+      )
+      SELECT point_code, name, sample_time, value, raw_value, unit, quality
+      FROM ranked
+      WHERE row_index <= $5
+      ORDER BY point_code, sample_time ASC
+      `,
+      [meterId, pointCodes, startTime.toISOString(), endTime.toISOString(), limitPerPoint],
+    );
+
+    const seriesByCode = new Map(pointCodes.map((code) => [code, { pointCode: code, name: code, unit: "", samples: [] }]));
+    for (const row of result.rows) {
+      const series = seriesByCode.get(row.point_code);
+      if (!series) continue;
+      series.name = row.name || series.name;
+      series.unit = row.unit || series.unit;
+      series.samples.push(historySample(row));
+    }
+
+    res.json({ ok: true, series: Array.from(seriesByCode.values()) });
+    return;
+  }
+
+  if (!pointCode) {
+    res.status(400).json({ ok: false, error: "pointCode or pointCodes is required" });
+    return;
+  }
+
+  const limit = boundedNumber(req.query.limit, 500, 1, 5000);
   const result = await query(
     `
     SELECT sample_time, value, raw_value, unit, quality
@@ -140,6 +187,176 @@ app.get("/api/history", async (req, res) => {
   );
   res.json({ ok: true, samples: result.rows.reverse() });
 });
+
+app.get("/api/history/records", async (req, res) => {
+  const meterId = String(req.query.meterId || "");
+  const circuitId = String(req.query.circuitId || "");
+  const pointCodes = String(req.query.pointCodes || "")
+    .split(",")
+    .map((code) => code.trim())
+    .filter(Boolean);
+  const startTime = parseHistoryDate(req.query.startTime);
+  const endTime = parseHistoryDate(req.query.endTime);
+  const page = boundedNumber(req.query.page, 1, 1, 100000);
+  const pageSize = boundedNumber(req.query.pageSize, 20, 1, 500);
+  const order = String(req.query.order || "asc").toLowerCase() === "desc" ? "desc" : "asc";
+  const orderSql = order === "desc" ? "DESC" : "ASC";
+  const params = [];
+  const conditions = [];
+
+  if (!meterId && !circuitId) {
+    res.status(400).json({ ok: false, error: "meterId or circuitId is required" });
+    return;
+  }
+  if (!startTime || !endTime || startTime >= endTime) {
+    res.status(400).json({ ok: false, error: "valid startTime and endTime are required" });
+    return;
+  }
+
+  params.push(startTime.toISOString());
+  conditions.push(`hs.sample_time >= $${params.length}`);
+  params.push(endTime.toISOString());
+  conditions.push(`hs.sample_time <= $${params.length}`);
+  if (meterId) {
+    params.push(meterId);
+    conditions.push(`hs.meter_id = $${params.length}`);
+  } else {
+    params.push(circuitId);
+    conditions.push(`pm.circuit_id = $${params.length}`);
+  }
+  if (pointCodes.length > 0) {
+    params.push(pointCodes);
+    conditions.push(`hs.point_code = ANY($${params.length})`);
+  }
+
+  const whereSql = conditions.join("\n      AND ");
+  const totalResult = await query(
+    `
+    SELECT COUNT(*)::int AS total
+    FROM (
+      SELECT hs.sample_time
+      FROM history_sample hs
+      JOIN point_mapping pm ON pm.id = hs.mapping_id
+      WHERE ${whereSql}
+      GROUP BY hs.sample_time
+    ) grouped_sample_times
+    `,
+    params,
+  );
+  const total = Number(totalResult.rows[0]?.total || 0);
+  const offset = (page - 1) * pageSize;
+  const pageParams = [...params, pageSize, offset];
+  const sampleTimesResult = await query(
+    `
+    SELECT hs.sample_time
+    FROM history_sample hs
+    JOIN point_mapping pm ON pm.id = hs.mapping_id
+    WHERE ${whereSql}
+    GROUP BY hs.sample_time
+    ORDER BY hs.sample_time ${orderSql}
+    LIMIT $${params.length + 1}
+    OFFSET $${params.length + 2}
+    `,
+    pageParams,
+  );
+  const sampleTimes = sampleTimesResult.rows.map((row) => row.sample_time);
+  if (sampleTimes.length === 0) {
+    res.json({
+      ok: true,
+      page,
+      pageSize,
+      order,
+      total,
+      hasNext: false,
+      columns: [],
+      rows: [],
+    });
+    return;
+  }
+
+  const sampleParams = [...params, sampleTimes];
+  const sampleResult = await query(
+    `
+    SELECT
+      hs.sample_time,
+      hs.point_code,
+      hs.name,
+      hs.value,
+      hs.raw_value,
+      hs.unit,
+      hs.quality
+    FROM history_sample hs
+    JOIN point_mapping pm ON pm.id = hs.mapping_id
+    WHERE ${whereSql}
+      AND hs.sample_time = ANY($${params.length + 1}::timestamptz[])
+    ORDER BY hs.sample_time ${orderSql}, hs.point_code
+    `,
+    sampleParams,
+  );
+
+  const rowsByTime = new Map(sampleTimes.map((sampleTime) => {
+    const key = historyTimeKey(sampleTime);
+    return [key, { sampleTime, points: {} }];
+  }));
+  const columnsByCode = new Map();
+  for (const row of sampleResult.rows) {
+    const key = historyTimeKey(row.sample_time);
+    const record = rowsByTime.get(key);
+    if (!record) continue;
+    record.points[row.point_code] = {
+      code: row.point_code,
+      name: row.name,
+      value: row.value,
+      rawValue: row.raw_value,
+      unit: row.unit,
+      quality: row.quality,
+    };
+    if (!columnsByCode.has(row.point_code)) {
+      columnsByCode.set(row.point_code, {
+        code: row.point_code,
+        name: row.name || row.point_code,
+        unit: row.unit || "",
+      });
+    }
+  }
+
+  res.json({
+    ok: true,
+    page,
+    pageSize,
+    order,
+    total,
+    hasNext: offset + sampleTimes.length < total,
+    columns: Array.from(columnsByCode.values()),
+    rows: Array.from(rowsByTime.values()),
+  });
+});
+
+function parseHistoryDate(value) {
+  if (!value) return null;
+  const date = new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function boundedNumber(value, fallback, min, max) {
+  const number = Number(value || fallback);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(Math.max(number, min), max);
+}
+
+function historySample(row) {
+  return {
+    sampleTime: row.sample_time,
+    value: row.value,
+    rawValue: row.raw_value,
+    quality: row.quality,
+  };
+}
+
+function historyTimeKey(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
+}
 
 app.get("/api/alarms", async (_req, res) => {
   const result = await query(
@@ -176,20 +393,6 @@ app.get("/api/interfaces/status", async (_req, res) => {
   res.json({ ok: true, interfaces: result.rows });
 });
 
-function requireIngestToken(req, res, next) {
-  if (!config.ingestToken) {
-    next();
-    return;
-  }
-  const auth = req.get("Authorization") || "";
-  const xToken = req.get("X-Access-Token") || "";
-  if (auth === `Bearer ${config.ingestToken}` || xToken === config.ingestToken) {
-    next();
-    return;
-  }
-  res.status(401).json({ ok: false, error: "unauthorized" });
-}
-
 function switchStatusFromRow(row) {
   if (row.value === null || row.value === undefined) return null;
   if (row.point_code === "switch_status") return Number(row.value);
@@ -199,7 +402,6 @@ function switchStatusFromRow(row) {
 }
 
 async function start() {
-  await initializeDatabase();
   const server = app.listen(config.port, config.host, () => {
     console.log(`software2 backend listening on http://${config.host}:${config.port}`);
   });

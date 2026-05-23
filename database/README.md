@@ -1,6 +1,8 @@
 # database
 
-服务器端轻量化数据库目录，用于承接软件1发送到软件2的 JSON 数据包。
+服务器端轻量化数据库目录，用于承接软件1发送到数据库侧入库服务的 JSON 数据包。
+
+正式演示链路采用 PostgreSQL：软件1把采集/模拟数据处理打包后发送到数据库侧入库服务入库，软件2后台只从数据库拉取数据。SQLite 脚本保留为本机轻量验证参考。
 
 ## 文件说明
 
@@ -60,7 +62,7 @@ database/server_config.json
 ```json
 {
   "host": "127.0.0.1",
-  "port": 8000,
+  "port": 9000,
   "databasePath": "data/pq_monitor.sqlite3",
   "token": "",
   "maxBodyBytes": 1048576
@@ -76,7 +78,7 @@ python database\ingest_server.py
 健康检查：
 
 ```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/ingest/health" -Method Get
+Invoke-RestMethod -Uri "http://127.0.0.1:9000/api/ingest/health" -Method Get
 ```
 
 使用软件1打包逻辑发送一包测试数据：
@@ -90,7 +92,7 @@ python database\smoke_send_software1.py
 ```json
 {
   "receiver": {
-    "baseUrl": "http://127.0.0.1:8000",
+    "baseUrl": "http://127.0.0.1:9000",
     "ingestPath": "/api/ingest/packets",
     "token": ""
   }
@@ -110,7 +112,7 @@ python database\smoke_send_software1.py
 | `heartbeat` | `ingest_packet`、`interface_status`、`event` |
 | `comm_status` | `ingest_packet`、`interface_status`、`event`、通信告警 |
 
-软件2后端接收 `POST /api/ingest/packets` 时，可以直接调用：
+数据库侧入库服务接收 `POST /api/ingest/packets` 时，可以直接调用：
 
 ```python
 from database.init_database import connect

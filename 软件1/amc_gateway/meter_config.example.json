@@ -37,7 +37,7 @@
     "statisticsWindowSeconds": 3
   },
   "receiver": {
-    "baseUrl": "http://127.0.0.1:8000",
+    "baseUrl": "http://127.0.0.1:9000",
     "ingestPath": "/api/ingest/packets",
     "healthPath": "/api/ingest/health",
     "testPath": "/api/ingest/test",

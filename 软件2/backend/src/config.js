@@ -12,6 +12,8 @@ function resolveFromBackend(value, fallback) {
 const config = {
   host: process.env.HOST || "0.0.0.0",
   port: Number(process.env.PORT || 8000),
+  databaseIngestHost: process.env.DATABASE_INGEST_HOST || process.env.INGEST_HOST || "0.0.0.0",
+  databaseIngestPort: Number(process.env.DATABASE_INGEST_PORT || process.env.INGEST_PORT || 9000),
   databaseUrl: process.env.DATABASE_URL || "postgres://pq_app:change_me@127.0.0.1:5432/pq_monitor",
   ingestToken: process.env.INGEST_TOKEN || "",
   corsOrigin: process.env.CORS_ORIGIN || "*",

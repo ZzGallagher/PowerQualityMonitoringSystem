@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>软件2 - 低压组态监测</title>
-    <link rel="stylesheet" href="./styles.css?v=20260522-status" />
+    <link rel="stylesheet" href="./styles.css?v=20260523-history-page-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -77,6 +77,70 @@
           </div>
         </section>
 
+        <section id="historyPage" class="page">
+          <div class="history-page-layout">
+            <section class="history-query-panel" aria-label="历史数据查询条件">
+              <label class="history-filter-field history-circuit-field">
+                <span>回路编号 / 回路名称</span>
+                <div class="history-circuit-combobox">
+                  <input
+                    id="historyCircuitInput"
+                    type="text"
+                    placeholder="输入或选择回路"
+                    autocomplete="off"
+                    role="combobox"
+                    aria-expanded="false"
+                    aria-controls="historyCircuitDropdown"
+                  />
+                  <button id="historyCircuitToggle" class="history-circuit-toggle" type="button" title="选择回路" aria-label="选择回路">▼</button>
+                  <div id="historyCircuitDropdown" class="history-circuit-dropdown" role="listbox" hidden></div>
+                </div>
+              </label>
+
+              <div class="history-page-time-fields">
+                <div id="historyPageStartField"></div>
+                <div id="historyPageEndField"></div>
+              </div>
+
+              <label class="history-filter-field">
+                <span>每页条数</span>
+                <select id="historyPageSizeSelect">
+                  <option value="10">10 条</option>
+                  <option value="20" selected>20 条</option>
+                  <option value="50">50 条</option>
+                  <option value="100">100 条</option>
+                </select>
+              </label>
+
+              <label class="history-filter-field">
+                <span>时间顺序</span>
+                <select id="historyOrderSelect">
+                  <option value="desc" selected>时间倒序</option>
+                  <option value="asc">时间顺序</option>
+                </select>
+              </label>
+
+              <button id="historyPageQueryButton" class="history-query-button" type="button">查询</button>
+            </section>
+
+            <section class="history-results-panel" aria-label="历史数据查询结果">
+              <div class="history-result-toolbar">
+                <div>
+                  <strong id="historyResultTitle">请选择回路并查询</strong>
+                  <span id="historyResultMeta">结束时间默认填写当前时间</span>
+                </div>
+                <div class="history-pagination">
+                  <button id="historyPrevPageButton" class="tool-button" type="button" title="上一页">‹</button>
+                  <span id="historyPageInfo">第 1 页</span>
+                  <button id="historyNextPageButton" class="tool-button" type="button" title="下一页">›</button>
+                </div>
+              </div>
+              <div id="historyPageStatus" class="history-page-status"></div>
+              <div id="historyTableHost" class="history-table-host"></div>
+            </section>
+          </div>
+        </section>
+
         <section id="placeholderPage" class="page">
           <div class="placeholder-card">
             <h2 id="placeholderTitle"></h2>
@@ -94,6 +158,6 @@
     </dialog>
 
     <script src="./topology-config.js"></script>
-    <script src="./app.js?v=20260522-status"></script>
+    <script src="./app.js?v=20260523-history-page-2"></script>
   </body>
 </html>

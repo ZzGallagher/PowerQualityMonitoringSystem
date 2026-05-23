@@ -2,12 +2,13 @@
   "name": "pq-monitor-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "Software2 backend for software1 packet ingest and PostgreSQL-backed APIs.",
+  "description": "Software2 read APIs and database-side PostgreSQL packet ingest service.",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
+    "start:ingest": "node src/ingest-server.js",
     "init-db": "node src/init-db.js",
-    "check": "node --check src/server.js && node --check src/db.js && node --check src/ingest.js && node --check src/init-db.js"
+    "check": "node --check src/server.js && node --check src/ingest-server.js && node --check src/db.js && node --check src/ingest.js && node --check src/init-db.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

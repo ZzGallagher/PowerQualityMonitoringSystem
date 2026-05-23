@@ -1,6 +1,6 @@
 const NAV_ITEMS = [
   ["overview", "低压组态监测", "P0"],
-  ["history", "历史曲线", "P0"],
+  ["history", "历史数据", "P0"],
   ["alarms", "告警事件", "P0"],
   ["interfaces", "接口管理", "P0"],
   ["reports", "报表抄表", "P1"],
@@ -31,6 +31,69 @@ let activePage = "overview";
 let realtimeSeed = 0;
 let topologyZoom = 1.5;
 const realtimeByMeter = new Map();
+let activeDialogTab = "realtime";
+let historyRequestId = 0;
+let historyPageRequestId = 0;
+const historyStateByCircuit = new Map();
+
+const HISTORY_CHART_GROUPS = [
+  {
+    key: "voltage",
+    title: "电压曲线",
+    series: [
+      ["ua", "A相电压", "Ua", "#2563eb"],
+      ["ub", "B相电压", "Ub", "#16a34a"],
+      ["uc", "C相电压", "Uc", "#dc2626"],
+      ["uab", "AB线电压", "Uab", "#7c3aed"],
+      ["ubc", "CB线电压", "Ucb", "#0891b2"],
+      ["uac", "AC线电压", "Uac", "#ea580c"],
+    ],
+  },
+  {
+    key: "current",
+    title: "电流曲线",
+    series: [
+      ["ia", "A相电流", "Ia", "#2563eb"],
+      ["ib", "B相电流", "Ib", "#16a34a"],
+      ["ic", "C相电流", "Ic", "#dc2626"],
+    ],
+  },
+  {
+    key: "power",
+    title: "功率相关曲线",
+    series: [
+      ["p_total", "有功功率", "P", "#2563eb"],
+      ["q_total", "无功功率", "Q", "#16a34a"],
+      ["s_total", "视在功率", "S", "#dc2626"],
+      ["pf_total", "功率因数", "PF", "#7c3aed"],
+      ["frequency", "频率", "f", "#0891b2"],
+      ["ep_import", "电度", "Ep", "#ea580c"],
+    ],
+  },
+];
+
+const HISTORY_POINT_CODES = HISTORY_CHART_GROUPS.flatMap((group) => group.series.map(([code]) => code));
+const HISTORY_TABLE_COLUMNS = HISTORY_CHART_GROUPS.flatMap((group) => group.series.map(([code, name, symbol]) => ({
+  code,
+  name,
+  symbol,
+})));
+const historyPageState = {
+  initialized: false,
+  circuitQuery: "",
+  selectedCircuitId: "",
+  startValue: "",
+  endValue: "",
+  pageSize: 20,
+  order: "desc",
+  page: 1,
+  total: 0,
+  hasNext: false,
+  status: "idle",
+  message: "",
+  rows: [],
+  columns: HISTORY_TABLE_COLUMNS,
+};
 
 function buildCircuits() {
   return TOPOLOGY_CONFIG.cabinets.flatMap((cabinet, cabinetIndex) => {
@@ -64,6 +127,7 @@ async function init() {
   initCollectorStatusIndicator();
   renderNavigation();
   renderSummary();
+  initHistoryPage();
   await loadTopologySvg();
   renderDynamicLayers();
   refreshTopologyState();
@@ -115,12 +179,16 @@ function setActivePage(page) {
   });
 
   const isOverview = page === "overview";
+  const isHistory = page === "history";
   document.querySelector("#overviewPage").classList.toggle("page-active", isOverview);
-  document.querySelector("#placeholderPage").classList.toggle("page-active", !isOverview);
+  document.querySelector("#historyPage").classList.toggle("page-active", isHistory);
+  document.querySelector("#placeholderPage").classList.toggle("page-active", !isOverview && !isHistory);
   const label = NAV_ITEMS.find(([key]) => key === page)?.[1] ?? "低压组态监测";
   document.querySelector("#pageTitle").textContent = label;
 
-  if (!isOverview) {
+  if (isHistory) {
+    activateHistoryPage();
+  } else if (!isOverview) {
     document.querySelector("#placeholderTitle").textContent = label;
     document.querySelector("#placeholderBody").textContent = PLACEHOLDER_COPY[page] ?? "";
   }
@@ -131,6 +199,421 @@ function renderSummary() {
   document.querySelector("#circuitCount").textContent = circuits.length;
   document.querySelector("#boundCount").textContent = boundCount;
   document.querySelector("#unboundCount").textContent = circuits.length - boundCount;
+}
+
+function initHistoryPage() {
+  if (historyPageState.initialized) return;
+
+  const end = new Date();
+  const start = new Date(end.getTime() - 60 * 60 * 1000);
+  historyPageState.startValue = formatBeijingInputDateTime(start);
+  historyPageState.endValue = formatBeijingInputDateTime(end);
+  historyPageState.initialized = true;
+
+  document.querySelector("#historyPageStartField").innerHTML = historyTimeField("开始时间", "historyPageStart", historyPageState.startValue);
+  document.querySelector("#historyPageEndField").innerHTML = historyTimeField("结束时间", "historyPageEnd", historyPageState.endValue);
+
+  const circuitInput = document.querySelector("#historyCircuitInput");
+  const circuitToggle = document.querySelector("#historyCircuitToggle");
+  const circuitDropdown = document.querySelector("#historyCircuitDropdown");
+  const circuitField = document.querySelector(".history-circuit-field");
+  renderHistoryCircuitOptions("");
+
+  circuitInput.addEventListener("input", () => {
+    historyPageState.circuitQuery = circuitInput.value.trim();
+    renderHistoryCircuitOptions(historyPageState.circuitQuery);
+    openHistoryCircuitDropdown();
+  });
+  circuitInput.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeHistoryCircuitDropdown();
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      renderHistoryCircuitOptions("");
+      openHistoryCircuitDropdown();
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      closeHistoryCircuitDropdown();
+      historyPageState.page = 1;
+      loadHistoryPageData();
+    }
+  });
+  circuitInput.addEventListener("focus", () => {
+    renderHistoryCircuitOptions(historyPageState.circuitQuery);
+  });
+  circuitToggle.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (circuitDropdown.hidden) {
+      renderHistoryCircuitOptions("");
+      openHistoryCircuitDropdown();
+    } else {
+      closeHistoryCircuitDropdown();
+    }
+  });
+  circuitDropdown.addEventListener("click", (event) => {
+    const option = event.target.closest("[data-history-circuit-id]");
+    if (!option) return;
+    selectHistoryCircuit(option.dataset.historyCircuitId);
+  });
+  document.addEventListener("click", (event) => {
+    if (!circuitField.contains(event.target)) closeHistoryCircuitDropdown();
+  });
+
+  document.querySelector("#historyPageQueryButton").addEventListener("click", () => {
+    closeHistoryCircuitDropdown();
+    historyPageState.page = 1;
+    loadHistoryPageData();
+  });
+
+  document.querySelector("#historyPageSizeSelect").addEventListener("change", (event) => {
+    historyPageState.pageSize = Number(event.target.value) || 20;
+    historyPageState.page = 1;
+    if (historyPageState.status === "success") loadHistoryPageData();
+  });
+
+  document.querySelector("#historyOrderSelect").addEventListener("change", (event) => {
+    historyPageState.order = event.target.value === "desc" ? "desc" : "asc";
+    historyPageState.page = 1;
+    if (historyPageState.status === "success") loadHistoryPageData();
+  });
+
+  document.querySelector("#historyPrevPageButton").addEventListener("click", () => {
+    if (historyPageState.page <= 1 || historyPageState.status === "loading") return;
+    historyPageState.page -= 1;
+    loadHistoryPageData();
+  });
+
+  document.querySelector("#historyNextPageButton").addEventListener("click", () => {
+    if (!historyPageState.hasNext || historyPageState.status === "loading") return;
+    historyPageState.page += 1;
+    loadHistoryPageData();
+  });
+
+  renderHistoryPageState();
+}
+
+function renderHistoryCircuitOptions(filterText) {
+  const dropdown = document.querySelector("#historyCircuitDropdown");
+  const text = String(filterText || "").trim().toLowerCase();
+  const matchedCircuits = circuits.filter((circuit) => {
+    if (!text) return true;
+    return circuit.internalId.toLowerCase().includes(text)
+      || displayCircuitName(circuit).toLowerCase().includes(text)
+      || circuit.cabinetCode.toLowerCase().includes(text);
+  });
+
+  dropdown.innerHTML = matchedCircuits.length > 0
+    ? matchedCircuits.map((circuit) => `<button
+        class="history-circuit-option"
+        type="button"
+        role="option"
+        data-history-circuit-id="${escapeHtml(circuit.internalId)}"
+      >
+        <strong>${escapeHtml(circuit.internalId)}</strong>
+        <span>${escapeHtml(historyCircuitOptionText(circuit))}</span>
+      </button>`).join("")
+    : `<div class="history-circuit-empty">没有匹配的回路</div>`;
+}
+
+function openHistoryCircuitDropdown() {
+  const input = document.querySelector("#historyCircuitInput");
+  const dropdown = document.querySelector("#historyCircuitDropdown");
+  dropdown.hidden = false;
+  input.setAttribute("aria-expanded", "true");
+}
+
+function closeHistoryCircuitDropdown() {
+  const input = document.querySelector("#historyCircuitInput");
+  const dropdown = document.querySelector("#historyCircuitDropdown");
+  if (!input || !dropdown) return;
+  dropdown.hidden = true;
+  input.setAttribute("aria-expanded", "false");
+}
+
+function selectHistoryCircuit(circuitId) {
+  const circuit = findCircuit(circuitId);
+  if (!circuit) return;
+  historyPageState.circuitQuery = circuit.internalId;
+  historyPageState.selectedCircuitId = circuit.internalId;
+  document.querySelector("#historyCircuitInput").value = circuit.internalId;
+  closeHistoryCircuitDropdown();
+  renderHistoryPageState();
+}
+
+function historyCircuitOptionText(circuit) {
+  return `${displayCircuitName(circuit)} / ${circuit.cabinetCode} / ${circuit.meter ?? "未接入仪表"}`;
+}
+
+function activateHistoryPage() {
+  if (!historyPageState.initialized) initHistoryPage();
+  if (selectedCircuitId && !historyPageState.circuitQuery) {
+    const circuit = findCircuit(selectedCircuitId);
+    if (circuit) {
+      historyPageState.circuitQuery = circuit.internalId;
+      document.querySelector("#historyCircuitInput").value = circuit.internalId;
+    }
+  }
+  if (historyPageState.status === "idle") {
+    historyPageState.endValue = formatBeijingInputDateTime(new Date());
+    document.querySelector("#historyPageEndField").innerHTML = historyTimeField("结束时间", "historyPageEnd", historyPageState.endValue);
+  }
+  renderHistoryPageState();
+}
+
+function resolveHistoryCircuit(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (!text) return null;
+  return circuits.find((circuit) => circuit.internalId.toLowerCase() === text)
+    ?? circuits.find((circuit) => displayCircuitName(circuit).toLowerCase() === text)
+    ?? circuits.find((circuit) => `${circuit.cabinetCode}-${circuit.sequence}`.toLowerCase() === text)
+    ?? circuits.find((circuit) => circuit.internalId.toLowerCase().includes(text) || displayCircuitName(circuit).toLowerCase().includes(text));
+}
+
+async function loadHistoryPageData() {
+  const circuit = resolveHistoryCircuit(document.querySelector("#historyCircuitInput").value);
+  historyPageState.startValue = readHistoryTimeValue("historyPageStart") ?? historyPageState.startValue;
+  historyPageState.endValue = readHistoryTimeValue("historyPageEnd") ?? historyPageState.endValue;
+  historyPageState.pageSize = Number(document.querySelector("#historyPageSizeSelect").value) || 20;
+  historyPageState.order = document.querySelector("#historyOrderSelect").value === "desc" ? "desc" : "asc";
+
+  if (!circuit) {
+    historyPageState.status = "error";
+    historyPageState.selectedCircuitId = "";
+    historyPageState.message = "请选择或输入有效的回路编号、回路名称。";
+    historyPageState.rows = [];
+    historyPageState.total = 0;
+    historyPageState.hasNext = false;
+    renderHistoryPageState();
+    return;
+  }
+
+  historyPageState.selectedCircuitId = circuit.internalId;
+  historyPageState.circuitQuery = document.querySelector("#historyCircuitInput").value.trim();
+
+  if (!circuit.meter) {
+    historyPageState.status = "error";
+    historyPageState.message = `${circuit.internalId} ${displayCircuitName(circuit)} 未绑定仪表，无法从数据库查询历史数据。`;
+    historyPageState.rows = [];
+    historyPageState.total = 0;
+    historyPageState.hasNext = false;
+    renderHistoryPageState();
+    return;
+  }
+
+  const startTime = parseBeijingInputDateTime(historyPageState.startValue);
+  const endTime = parseBeijingInputDateTime(historyPageState.endValue);
+  if (!startTime || !endTime || startTime >= endTime) {
+    historyPageState.status = "error";
+    historyPageState.message = "请输入有效的起止时刻，且开始时间必须早于结束时间。";
+    historyPageState.rows = [];
+    historyPageState.total = 0;
+    historyPageState.hasNext = false;
+    renderHistoryPageState();
+    return;
+  }
+
+  const requestId = ++historyPageRequestId;
+  historyPageState.status = "loading";
+  historyPageState.message = "";
+  renderHistoryPageState();
+
+  try {
+    const params = new URLSearchParams({
+      meterId: circuit.meter,
+      circuitId: circuit.dbCircuitId,
+      pointCodes: HISTORY_POINT_CODES.join(","),
+      startTime: startTime.toISOString(),
+      endTime: endTime.toISOString(),
+      page: String(historyPageState.page),
+      pageSize: String(historyPageState.pageSize),
+      order: historyPageState.order,
+    });
+    const payload = await fetchHistoryRecordsPayload(params, circuit, startTime, endTime);
+    if (requestId !== historyPageRequestId) return;
+    historyPageState.status = "success";
+    historyPageState.rows = payload.rows ?? [];
+    historyPageState.columns = mergeHistoryColumns(payload.columns ?? []);
+    historyPageState.total = Number(payload.total ?? 0);
+    historyPageState.hasNext = Boolean(payload.hasNext);
+    historyPageState.message = "";
+  } catch {
+    if (requestId !== historyPageRequestId) return;
+    historyPageState.status = "error";
+    historyPageState.message = "历史数据查询失败，请检查时间范围和后台服务。";
+    historyPageState.rows = [];
+    historyPageState.total = 0;
+    historyPageState.hasNext = false;
+  }
+
+  renderHistoryPageState();
+}
+
+async function fetchHistoryRecordsPayload(params, circuit, startTime, endTime) {
+  const response = await fetch(topologyApiUrl(`/api/history/records?${params.toString()}`), { cache: "no-store" });
+  const payload = await response.json().catch(() => ({}));
+  if (response.ok && payload.ok) return payload;
+  if (response.status !== 404) {
+    throw new Error(payload.error || "history records query failed");
+  }
+
+  const fallbackParams = new URLSearchParams({
+    meterId: circuit.meter,
+    pointCodes: HISTORY_POINT_CODES.join(","),
+    startTime: startTime.toISOString(),
+    endTime: endTime.toISOString(),
+    limitPerPoint: "5000",
+  });
+  const fallbackResponse = await fetch(topologyApiUrl(`/api/history?${fallbackParams.toString()}`), { cache: "no-store" });
+  const fallbackPayload = await fallbackResponse.json();
+  if (!fallbackResponse.ok || !fallbackPayload.ok) {
+    throw new Error(fallbackPayload.error || "history query fallback failed");
+  }
+  return historySeriesToRecords(fallbackPayload.series ?? []);
+}
+
+function historySeriesToRecords(series) {
+  const rowsByTime = new Map();
+  const columns = [];
+  series.forEach((item) => {
+    if (!item?.pointCode) return;
+    columns.push({
+      code: item.pointCode,
+      name: item.name || item.pointCode,
+      unit: item.unit || "",
+    });
+    (item.samples ?? []).forEach((sample) => {
+      const key = new Date(sample.sampleTime).toISOString();
+      if (!rowsByTime.has(key)) {
+        rowsByTime.set(key, { sampleTime: sample.sampleTime, points: {} });
+      }
+      rowsByTime.get(key).points[item.pointCode] = {
+        code: item.pointCode,
+        name: item.name || item.pointCode,
+        value: sample.value,
+        rawValue: sample.rawValue,
+        unit: item.unit || "",
+        quality: sample.quality,
+      };
+    });
+  });
+
+  const sortedRows = Array.from(rowsByTime.values()).sort((left, right) => {
+    const diff = new Date(left.sampleTime).getTime() - new Date(right.sampleTime).getTime();
+    return historyPageState.order === "desc" ? -diff : diff;
+  });
+  const offset = (historyPageState.page - 1) * historyPageState.pageSize;
+  const rows = sortedRows.slice(offset, offset + historyPageState.pageSize);
+  return {
+    ok: true,
+    page: historyPageState.page,
+    pageSize: historyPageState.pageSize,
+    order: historyPageState.order,
+    total: sortedRows.length,
+    hasNext: offset + rows.length < sortedRows.length,
+    columns,
+    rows,
+  };
+}
+
+function mergeHistoryColumns(payloadColumns) {
+  const byCode = new Map(HISTORY_TABLE_COLUMNS.map((column) => [column.code, { ...column }]));
+  payloadColumns.forEach((column) => {
+    if (!column?.code) return;
+    const existing = byCode.get(column.code) ?? { code: column.code, symbol: column.code, name: column.name || column.code };
+    byCode.set(column.code, {
+      ...existing,
+      name: column.name || existing.name,
+      unit: column.unit || existing.unit || "",
+    });
+  });
+  return Array.from(byCode.values());
+}
+
+function renderHistoryPageState() {
+  const circuit = historyPageState.selectedCircuitId ? findCircuit(historyPageState.selectedCircuitId) : resolveHistoryCircuit(historyPageState.circuitQuery);
+  const title = circuit ? `${circuit.internalId} / ${displayCircuitName(circuit)}` : "请选择回路并查询";
+  const totalPage = historyPageState.total > 0 ? Math.ceil(historyPageState.total / historyPageState.pageSize) : 1;
+  const startIndex = historyPageState.total === 0 ? 0 : (historyPageState.page - 1) * historyPageState.pageSize + 1;
+  const endIndex = Math.min(historyPageState.total, historyPageState.page * historyPageState.pageSize);
+
+  document.querySelector("#historyResultTitle").textContent = title;
+  document.querySelector("#historyResultMeta").textContent = historyPageState.total > 0
+    ? `共 ${historyPageState.total} 条，当前 ${startIndex}-${endIndex} 条`
+    : "结束时间默认填写当前时间";
+  document.querySelector("#historyPageInfo").textContent = `第 ${historyPageState.page} / ${totalPage} 页`;
+  document.querySelector("#historyPrevPageButton").disabled = historyPageState.status === "loading" || historyPageState.page <= 1;
+  document.querySelector("#historyNextPageButton").disabled = historyPageState.status === "loading" || !historyPageState.hasNext;
+  document.querySelector("#historyPageQueryButton").disabled = historyPageState.status === "loading";
+
+  const statusNode = document.querySelector("#historyPageStatus");
+  statusNode.className = `history-page-status ${historyPageState.status === "error" ? "error" : ""}`;
+  if (historyPageState.status === "loading") {
+    statusNode.textContent = "正在查询历史数据...";
+  } else if (historyPageState.status === "error") {
+    statusNode.textContent = historyPageState.message;
+  } else {
+    statusNode.textContent = "";
+  }
+
+  document.querySelector("#historyTableHost").innerHTML = historyTableMarkup();
+}
+
+function historyTableMarkup() {
+  if (historyPageState.status === "idle") {
+    return `<div class="history-empty-state">选择回路、时间范围和每页条数后点击查询。</div>`;
+  }
+  if (historyPageState.status === "loading") {
+    return `<div class="history-empty-state">数据加载中...</div>`;
+  }
+  if (historyPageState.status === "error") {
+    return "";
+  }
+  if (historyPageState.rows.length === 0) {
+    return `<div class="empty-state">该回路在所选时间段内暂无历史数据。</div>`;
+  }
+
+  const columns = historyPageState.columns;
+  return `<table class="history-data-table">
+    <thead>
+      <tr>
+        <th>采样时间</th>
+        ${columns.map((column) => `<th>${escapeHtml(historyColumnTitle(column))}</th>`).join("")}
+      </tr>
+    </thead>
+    <tbody>
+      ${historyPageState.rows.map((row) => `<tr>
+        <td class="history-time-cell">${escapeHtml(formatBeijingDateTime(new Date(row.sampleTime)))}</td>
+        ${columns.map((column) => `<td>${escapeHtml(formatHistoryTableValue(row.points?.[column.code], column.unit))}</td>`).join("")}
+      </tr>`).join("")}
+    </tbody>
+  </table>`;
+}
+
+function historyColumnTitle(column) {
+  const unit = column.unit ? ` (${column.unit})` : "";
+  return `${column.symbol || column.code}${unit}`;
+}
+
+function formatHistoryTableValue(point, fallbackUnit = "") {
+  if (!point || point.value === null || point.value === undefined) return "--";
+  const value = Number(point.value);
+  const text = Number.isFinite(value) ? value.toFixed(Math.abs(value) >= 100 ? 1 : 2) : String(point.value);
+  const unit = point.unit && point.unit !== fallbackUnit ? ` ${point.unit}` : "";
+  return `${text}${unit}`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 async function loadTopologySvg() {
@@ -414,8 +897,8 @@ async function refreshRealtimeState() {
     refreshCurrentOverlays();
     refreshCommunicationLabels();
     const dialog = document.querySelector("#circuitDialog");
-    if (dialog.open && selectedCircuitId) {
-      renderDialogContent(findCircuit(selectedCircuitId));
+    if (dialog.open && selectedCircuitId && activeDialogTab === "realtime") {
+      refreshOpenRealtimeDialog(findCircuit(selectedCircuitId));
     }
   } catch {
     realtimeByMeter.clear();
@@ -523,8 +1006,8 @@ function tickRealtime() {
   document.querySelector("#refreshTime").textContent = formatBeijingDateTime(now);
 
   const dialog = document.querySelector("#circuitDialog");
-  if (dialog.open && selectedCircuitId) {
-    renderDialogContent(findCircuit(selectedCircuitId));
+  if (dialog.open && selectedCircuitId && activeDialogTab === "realtime") {
+    refreshOpenRealtimeDialog(findCircuit(selectedCircuitId));
   }
   refreshCurrentOverlays();
   refreshCommunicationLabels();
@@ -537,6 +1020,7 @@ function findCircuit(circuitId) {
 function openCircuitDialog(circuitId) {
   const circuit = findCircuit(circuitId);
   if (!circuit) return;
+  activeDialogTab = "realtime";
   selectCircuit(circuitId);
   renderDialogContent(circuit);
   document.querySelector("#circuitDialog").showModal();
@@ -551,16 +1035,330 @@ function renderDialogContent(circuit) {
       <h2>${circuit.cabinetCode} · ${displayCircuitName(circuit)}</h2>
       <p>${circuit.internalId} / ${circuit.cabinetName} / ${circuit.cabinetType}</p>
     </div>
+    <div class="dialog-tabs" role="tablist" aria-label="回路数据视图">
+      <button class="dialog-tab ${activeDialogTab === "realtime" ? "active" : ""}" type="button" role="tab" aria-selected="${activeDialogTab === "realtime"}" data-dialog-tab="realtime">实时数据</button>
+      <button class="dialog-tab ${activeDialogTab === "history" ? "active" : ""}" type="button" role="tab" aria-selected="${activeDialogTab === "history"}" data-dialog-tab="history">历史数据</button>
+    </div>
     <div class="dialog-body">
-      <div class="kv-grid">
-        ${kv("内部回路编号", circuit.internalId)}
-        ${kv("绑定仪表", circuit.meter ?? "未接入")}
-        ${kv("数据来源", circuit.source)}
-        ${kv("开关状态", displaySwitchState(circuit))}
-        ${kv("质量码", quality)}
-      </div>
-      ${realtime ? measurementGrid(realtime) : emptyRealtime(circuit)}
+      ${dialogKvGrid(circuit, quality)}
+      ${activeDialogTab === "history" ? historyPanel(circuit) : realtime ? measurementGrid(realtime) : emptyRealtime(circuit)}
     </div>`;
+  bindDialogEvents(circuit);
+}
+
+function refreshOpenRealtimeDialog(circuit) {
+  if (!circuit) return;
+  const realtime = circuit.meter ? buildRealtime(circuit) : null;
+  const quality = realtime ? aggregateRealtimeQuality(realtime) : "not_connected";
+  const kvGrid = document.querySelector("#dialogContent .kv-grid");
+  if (kvGrid) kvGrid.outerHTML = dialogKvGrid(circuit, quality);
+  const measurementGridNode = document.querySelector("#dialogContent .measurement-grid");
+  if (measurementGridNode && realtime) {
+    measurementGridNode.outerHTML = measurementGrid(realtime);
+  }
+}
+
+function dialogKvGrid(circuit, quality) {
+  return `<div class="kv-grid">
+    ${kv("内部回路编号", circuit.internalId)}
+    ${kv("绑定仪表", circuit.meter ?? "未接入")}
+    ${kv("数据来源", circuit.source)}
+    ${kv("开关状态", displaySwitchState(circuit))}
+    ${kv("质量码", quality)}
+  </div>`;
+}
+
+function bindDialogEvents(circuit) {
+  document.querySelectorAll("[data-dialog-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextTab = button.dataset.dialogTab;
+      if (!nextTab || nextTab === activeDialogTab) return;
+      activeDialogTab = nextTab;
+      renderDialogContent(circuit);
+      if (nextTab === "history" && circuit.meter) {
+        const state = ensureHistoryState(circuit);
+        if (state.status === "idle") loadHistoryData(circuit);
+      }
+    });
+  });
+
+  const queryButton = document.querySelector("#historyQueryButton");
+  if (queryButton) {
+    queryButton.addEventListener("click", () => {
+      loadHistoryData(circuit);
+    });
+  }
+}
+
+function historyPanel(circuit) {
+  if (!circuit.meter) {
+    return `<div class="empty-state">该回路未绑定仪表，无法查询历史数据。</div>`;
+  }
+
+  const state = ensureHistoryState(circuit);
+  return `
+    <div class="history-panel">
+      <div class="history-controls">
+        ${historyTimeField("开始时间", "historyStart", state.startValue)}
+        ${historyTimeField("结束时间", "historyEnd", state.endValue)}
+        <button id="historyQueryButton" class="history-query-button" type="button">查询</button>
+      </div>
+      ${historyStatus(state)}
+      ${historyCharts(state)}
+    </div>`;
+}
+
+function ensureHistoryState(circuit) {
+  const existing = historyStateByCircuit.get(circuit.internalId);
+  if (existing) return existing;
+
+  const end = new Date();
+  const start = new Date(end.getTime() - 60 * 60 * 1000);
+  const state = {
+    startValue: formatBeijingInputDateTime(start),
+    endValue: formatBeijingInputDateTime(end),
+    status: "idle",
+    message: "",
+    series: [],
+  };
+  historyStateByCircuit.set(circuit.internalId, state);
+  return state;
+}
+
+function historyStatus(state) {
+  if (state.status === "loading") {
+    return `<div class="history-status">正在查询历史数据...</div>`;
+  }
+  if (state.status === "error") {
+    return `<div class="history-status error">${state.message}</div>`;
+  }
+  return "";
+}
+
+function historyCharts(state) {
+  if (state.status !== "success") return "";
+
+  const hasSamples = state.series.some((series) => (series.samples ?? []).some((sample) => sample.value !== null && sample.value !== undefined));
+  if (!hasSamples) {
+    return `<div class="empty-state">该时间范围内暂无历史数据。</div>`;
+  }
+
+  const seriesByCode = new Map(state.series.map((series) => [series.pointCode, series]));
+  return `<div class="history-chart-list">
+    ${HISTORY_CHART_GROUPS.map((group) => historyChartCard(group, seriesByCode)).join("")}
+  </div>`;
+}
+
+function historyChartCard(group, seriesByCode) {
+  return `<article class="history-chart-card">
+    ${lineChartSvg(group, seriesByCode)}
+  </article>`;
+}
+
+function lineChartSvg(group, seriesByCode) {
+  const width = 760;
+  const height = 300;
+  const margin = { top: 28, right: 18, bottom: 74, left: 58 };
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const allSamples = [];
+  const visibleSeries = group.series.map(([code, name, symbol, color]) => {
+    const series = seriesByCode.get(code) ?? { samples: [] };
+    const samples = (series.samples ?? [])
+      .map((sample) => ({
+        time: new Date(sample.sampleTime).getTime(),
+        value: Number(sample.value),
+      }))
+      .filter((sample) => Number.isFinite(sample.time) && Number.isFinite(sample.value));
+    allSamples.push(...samples);
+    return { code, name, symbol, color, unit: series.unit ?? "", samples };
+  });
+
+  if (allSamples.length === 0) {
+    return `<div class="chart-empty">${group.title}暂无数据</div>`;
+  }
+
+  const minTime = Math.min(...allSamples.map((sample) => sample.time));
+  const maxTime = Math.max(...allSamples.map((sample) => sample.time));
+  const minValue = Math.min(...allSamples.map((sample) => sample.value));
+  const maxValue = Math.max(...allSamples.map((sample) => sample.value));
+  const timeSpan = Math.max(1, maxTime - minTime);
+  const valuePadding = Math.max((maxValue - minValue) * 0.12, Math.abs(maxValue || 1) * 0.04, 0.1);
+  const yMin = minValue === maxValue ? minValue - valuePadding : minValue - valuePadding;
+  const yMax = minValue === maxValue ? maxValue + valuePadding : maxValue + valuePadding;
+  const valueSpan = Math.max(0.000001, yMax - yMin);
+  const x = (time) => margin.left + ((time - minTime) / timeSpan) * plotWidth;
+  const y = (value) => margin.top + plotHeight - ((value - yMin) / valueSpan) * plotHeight;
+  const yTicks = Array.from({ length: 5 }, (_, index) => yMin + (valueSpan * index) / 4);
+  const xTicks = [minTime, minTime + timeSpan / 2, maxTime];
+
+  return `<svg class="history-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${group.title}">
+    <text class="chart-title" x="${margin.left}" y="18">${group.title}</text>
+    <g class="chart-grid">
+      ${yTicks.map((tick) => {
+        const yy = y(tick);
+        return `<line x1="${margin.left}" y1="${yy}" x2="${width - margin.right}" y2="${yy}"></line>
+          <text x="${margin.left - 8}" y="${yy + 4}" text-anchor="end">${formatChartNumber(tick)}</text>`;
+      }).join("")}
+      ${xTicks.map((tick) => {
+        const xx = x(tick);
+        return `<line x1="${xx}" y1="${margin.top}" x2="${xx}" y2="${margin.top + plotHeight}"></line>
+          <text x="${xx}" y="${height - 52}" text-anchor="middle">${formatChartTime(tick)}</text>`;
+      }).join("")}
+    </g>
+    <rect class="chart-plot" x="${margin.left}" y="${margin.top}" width="${plotWidth}" height="${plotHeight}"></rect>
+    <g class="chart-lines">
+      ${visibleSeries.map((series) => {
+        if (series.samples.length === 0) return "";
+        const points = series.samples.map((sample) => `${x(sample.time).toFixed(2)},${y(sample.value).toFixed(2)}`).join(" ");
+        return `<polyline points="${points}" stroke="${series.color}"></polyline>`;
+      }).join("")}
+    </g>
+    <g class="chart-legend">
+      ${visibleSeries.map((series, index) => {
+        const lx = margin.left + (index % 3) * 210;
+        const ly = height - 28 + Math.floor(index / 3) * 14;
+        return `<circle cx="${lx}" cy="${ly - 4}" r="4" fill="${series.color}"></circle>
+          <text x="${lx + 8}" y="${ly}">${series.symbol} ${series.unit || "—"}</text>`;
+      }).join("")}
+    </g>
+  </svg>`;
+}
+
+async function loadHistoryData(circuit) {
+  const state = ensureHistoryState(circuit);
+  state.startValue = readHistoryTimeValue("historyStart") ?? state.startValue;
+  state.endValue = readHistoryTimeValue("historyEnd") ?? state.endValue;
+
+  const startTime = parseBeijingInputDateTime(state.startValue);
+  const endTime = parseBeijingInputDateTime(state.endValue);
+  if (!startTime || !endTime || startTime >= endTime) {
+    state.status = "error";
+    state.message = "请输入有效的起止时刻，且开始时间必须早于结束时间。";
+    state.series = [];
+    renderDialogContent(circuit);
+    return;
+  }
+
+  const requestId = ++historyRequestId;
+  state.status = "loading";
+  state.message = "";
+  renderDialogContent(circuit);
+
+  try {
+    const params = new URLSearchParams({
+      meterId: circuit.meter,
+      pointCodes: HISTORY_POINT_CODES.join(","),
+      startTime: startTime.toISOString(),
+      endTime: endTime.toISOString(),
+      limitPerPoint: "1000",
+    });
+    const response = await fetch(topologyApiUrl(`/api/history?${params.toString()}`), { cache: "no-store" });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || "history query failed");
+    }
+    if (requestId !== historyRequestId) return;
+    state.status = "success";
+    state.series = payload.series ?? [];
+  } catch {
+    if (requestId !== historyRequestId) return;
+    state.status = "error";
+    state.message = "历史数据查询失败，请检查时间范围和后台服务。";
+    state.series = [];
+  }
+
+  if (selectedCircuitId === circuit.internalId && activeDialogTab === "history") {
+    renderDialogContent(circuit);
+  }
+}
+
+function formatBeijingInputDateTime(date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  })
+    .formatToParts(date)
+    .reduce((result, part) => {
+      result[part.type] = part.value;
+      return result;
+    }, {});
+
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
+function historyTimeField(label, prefix, value) {
+  const date = historyDatePart(value);
+  const hour = historyHourPart(value);
+  const minute = historyMinutePart(value);
+  return `<label class="history-time-field">
+    <span>${label}</span>
+    <div class="history-time-control">
+      <input id="${prefix}Date" type="date" value="${date}" />
+      <select id="${prefix}Hour" aria-label="${label}小时">${timeOptions(24, hour)}</select>
+      <span class="history-time-separator">:</span>
+      <select id="${prefix}Minute" aria-label="${label}分钟">${timeOptions(60, minute)}</select>
+    </div>
+  </label>`;
+}
+
+function timeOptions(count, selectedValue) {
+  return Array.from({ length: count }, (_, index) => {
+    const value = String(index).padStart(2, "0");
+    return `<option value="${value}" ${value === selectedValue ? "selected" : ""}>${value}</option>`;
+  }).join("");
+}
+
+function historyDatePart(value) {
+  return String(value || "").slice(0, 10);
+}
+
+function historyHourPart(value) {
+  return String(value || "").slice(11, 13) || "00";
+}
+
+function historyMinutePart(value) {
+  return String(value || "").slice(14, 16) || "00";
+}
+
+function readHistoryTimeValue(prefix) {
+  const date = document.querySelector(`#${prefix}Date`)?.value;
+  const hour = document.querySelector(`#${prefix}Hour`)?.value;
+  const minute = document.querySelector(`#${prefix}Minute`)?.value;
+  if (!date || !hour || !minute) return null;
+  return `${date}T${hour}:${minute}`;
+}
+
+function parseBeijingInputDateTime(value) {
+  if (!value) return null;
+  const text = String(value).length === 16 ? `${value}:00+08:00` : `${value}+08:00`;
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatChartNumber(value) {
+  const absolute = Math.abs(value);
+  if (absolute >= 100) return value.toFixed(0);
+  if (absolute >= 10) return value.toFixed(1);
+  return value.toFixed(2);
+}
+
+function formatChartTime(value) {
+  const date = new Date(value);
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const hour = parts.find((part) => part.type === "hour")?.value ?? "--";
+  const minute = parts.find((part) => part.type === "minute")?.value ?? "--";
+  return `${hour}:${minute}`;
 }
 
 function displayCircuitName(circuit) {
@@ -587,14 +1385,23 @@ function buildRealtime(circuit) {
   if (!meterRealtime) return null;
   const points = meterRealtime.points ?? {};
   return [
-    ["Uab", formatPoint(points.uab)],
-    ["Ia", formatPoint(points.ia)],
-    ["Ib", formatPoint(points.ib)],
-    ["Ic", formatPoint(points.ic)],
-    ["P", formatPoint(points.p_total)],
-    ["PF", formatPoint(points.pf_total)],
-    ["f", formatPoint(points.frequency)],
-    ["不平衡", formatPoint(points.current_unbalance)],
+    measurement("A相电压", "Ua", points.ua, "V"),
+    measurement("AB线电压", "Uab", points.uab, "V"),
+    measurement("A相电流", "Ia", points.ia, "A"),
+    measurement("有功功率", "P", points.p_total, "W"),
+    measurement("功率因数", "PF", points.pf_total, "—"),
+    measurement("B相电压", "Ub", points.ub, "V"),
+    measurement("CB线电压", "Ucb", points.ubc, "V"),
+    measurement("B相电流", "Ib", points.ib, "A"),
+    measurement("无功功率", "Q", points.q_total, "var"),
+    measurement("频率", "f", points.frequency, "Hz"),
+    measurement("C相电压", "Uc", points.uc, "V"),
+    measurement("AC线电压", "Uac", points.uac, "V"),
+    measurement("C相电流", "Ic", points.ic, "A"),
+    measurement("视在功率", "S", points.s_total, "VA"),
+    measurement("电度", "Ep", points.ep_import, "kWh"),
+    measurement("电压不平衡度", "Uunb", points.voltage_unbalance, "%"),
+    measurement("电流不平衡度", "Iunb", points.current_unbalance, "%"),
   ];
 }
 
@@ -644,8 +1451,39 @@ function hasRealtimeData(circuit) {
 
 function measurementGrid(items) {
   return `<div class="measurement-grid">
-    ${items.map(([label, value]) => `<div class="measurement"><span>${label}</span><strong>${value}</strong></div>`).join("")}
+    ${items.map((item) => `<div class="measurement">
+      <span class="measurement-name">${item.name}</span>
+      <em class="measurement-symbol">${item.symbol}</em>
+      <strong class="measurement-reading">
+        <span class="measurement-value">${item.value}</span>
+        <small class="measurement-unit">${item.unit}</small>
+      </strong>
+    </div>`).join("")}
   </div>`;
+}
+
+function measurement(name, symbol, point, fallbackUnit) {
+  return {
+    name,
+    symbol,
+    ...formatMeasurement(point, fallbackUnit),
+  };
+}
+
+function formatMeasurement(point, fallbackUnit = "") {
+  const unit = point?.unit ?? fallbackUnit;
+  if (!point || point.value === null || point.value === undefined) {
+    return {
+      value: "--",
+      unit: unit || "—",
+    };
+  }
+
+  const value = Number(point.value);
+  return {
+    value: Number.isFinite(value) ? value.toFixed(Math.abs(value) >= 100 ? 1 : 2) : String(point.value),
+    unit: unit || "—",
+  };
 }
 
 function formatPoint(point, fallbackUnit = "") {
@@ -657,8 +1495,7 @@ function formatPoint(point, fallbackUnit = "") {
 }
 
 function aggregateRealtimeQuality(items) {
-  const values = items.map(([, value]) => value);
-  if (values.every((value) => value === "--")) return "unknown";
+  if (items.every((item) => item.value === "--")) return "unknown";
   return "from_database";
 }
 

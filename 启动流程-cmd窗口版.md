@@ -7,8 +7,8 @@
 本机测试时，一台电脑同时运行三部分：
 
 ```text
-软件1采集打包端 -> 软件2后台服务 -> PostgreSQL数据库
-软件2前端页面   -> 软件2后台服务 -> PostgreSQL数据库
+软件1采集打包端 -> 数据库侧入库服务 -> PostgreSQL数据库
+软件2前端页面   -> 软件2后台查询服务 -> PostgreSQL数据库
 ```
 
 默认本机地址：
@@ -16,9 +16,10 @@
 | 部分 | 地址/配置 |
 | --- | --- |
 | PostgreSQL | `127.0.0.1:5432` |
-| 软件2后台 | `http://127.0.0.1:8000` |
+| 数据库侧入库服务 | `http://127.0.0.1:9000` |
+| 软件2后台查询服务 | `http://127.0.0.1:8000` |
 | 软件2前端 | `http://127.0.0.1:8080` |
-| 软件1接收端配置 | `receiver.baseUrl = http://127.0.0.1:8000` |
+| 软件1接收端配置 | `receiver.baseUrl = http://127.0.0.1:9000` |
 
 ## 2. 启动前检查
 
@@ -47,6 +48,8 @@ dir .env
 ```text
 HOST=127.0.0.1
 PORT=8000
+DATABASE_INGEST_HOST=127.0.0.1
+DATABASE_INGEST_PORT=9000
 DATABASE_URL=postgres://pq_app:change_me@127.0.0.1:5432/pq_monitor
 INGEST_TOKEN=
 CORS_ORIGIN=*
@@ -58,21 +61,34 @@ SOFTWARE1_CONFIG_PATH="G:/#.Project/电能质量监测系统轻量版/软件1/am
 
 ## 3. 手动启动步骤
 
-### 窗口1：启动软件2后台
+### 窗口1：启动数据库侧入库服务
 
 ```cmd
 cd /d "G:\#.Project\电能质量监测系统轻量版\软件2\backend"
 npm run init-db
+npm run start:ingest
+```
+
+健康检查：
+
+```cmd
+curl http://127.0.0.1:9000/api/ingest/health
+```
+
+### 窗口2：启动软件2后台查询服务
+
+```cmd
+cd /d "G:\#.Project\电能质量监测系统轻量版\软件2\backend"
 npm start
 ```
 
 健康检查：
 
 ```cmd
-curl http://127.0.0.1:8000/api/ingest/health
+curl http://127.0.0.1:8000/api/health
 ```
 
-### 窗口2：启动软件2前端
+### 窗口3：启动软件2前端
 
 ```cmd
 cd /d "G:\#.Project\电能质量监测系统轻量版\软件2\web"
@@ -85,7 +101,7 @@ python -m http.server 8080
 http://127.0.0.1:8080
 ```
 
-### 窗口3：启动软件1真实仪表采集
+### 窗口4：启动软件1真实仪表采集
 
 `cmd.exe` 里使用：
 
@@ -129,9 +145,10 @@ python -m amc_gateway run --config meter_config.example.json --mode mock
 本机一键启动.cmd serial
 ```
 
-该脚本会打开三个新 cmd 窗口：
+该脚本会打开四个新 cmd 窗口：
 
-- `软件2后台`
+- `数据库侧入库服务`
+- `软件2后台查询服务`
 - `软件2前端`
 - `软件1采集`
 
@@ -139,13 +156,21 @@ python -m amc_gateway run --config meter_config.example.json --mode mock
 
 ### 数据库服务器
 
-PostgreSQL 部署在数据库机器上。软件1和软件2前端不直接连接数据库。
+PostgreSQL 部署在数据库机器上。软件1不直接连接 PostgreSQL，而是把数据包发给数据库侧入库服务。
 
 需要在数据库机器上创建：
 
 ```text
 database: pq_monitor
 user: pq_app
+```
+
+同时启动数据库侧入库服务：
+
+```cmd
+cd /d "G:\#.Project\电能质量监测系统轻量版\软件2\backend"
+npm run init-db
+npm run start:ingest
 ```
 
 ### 软件2后台机器
@@ -168,6 +193,8 @@ DATABASE_URL=postgres://pq_app:数据库密码@数据库服务器IP:5432/pq_moni
 HOST=0.0.0.0
 PORT=8000
 ```
+
+软件2后台只提供查询接口，不接收软件1入库包。
 
 ### 软件2前端机器
 
@@ -201,7 +228,7 @@ apiBaseUrl: "http://软件2后台IP:8000"
 
 ```json
 "receiver": {
-  "baseUrl": "http://127.0.0.1:8000",
+  "baseUrl": "http://127.0.0.1:9000",
   "ingestPath": "/api/ingest/packets"
 }
 ```
@@ -210,19 +237,25 @@ apiBaseUrl: "http://软件2后台IP:8000"
 
 ```json
 "receiver": {
-  "baseUrl": "http://软件2后台IP:8000",
+  "baseUrl": "http://数据库入库服务IP:9000",
   "ingestPath": "/api/ingest/packets"
 }
 ```
 
-如果软件2后台 `.env` 配置了 `INGEST_TOKEN`，这里的 `receiver.token` 也要填同一个值。
+如果数据库侧入库服务 `.env` 配置了 `INGEST_TOKEN`，这里的 `receiver.token` 也要填同一个值。
 
 ## 6. 常用验证接口
 
-后台健康：
+入库服务健康：
 
 ```cmd
-curl http://127.0.0.1:8000/api/ingest/health
+curl http://127.0.0.1:9000/api/ingest/health
+```
+
+软件2查询后台健康：
+
+```cmd
+curl http://127.0.0.1:8000/api/health
 ```
 
 实时数据：
