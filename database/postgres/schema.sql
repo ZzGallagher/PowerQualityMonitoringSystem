@@ -216,11 +216,18 @@ CREATE TABLE IF NOT EXISTS alarm (
     recovered_at TIMESTAMPTZ,
     acknowledged_at TIMESTAMPTZ,
     acknowledged_by TEXT,
+    ack_note TEXT,
     closed_at TIMESTAMPTZ,
     closed_by TEXT,
+    close_note TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     packet_id BIGINT REFERENCES ingest_packet(id),
     raw_json JSONB
 );
+
+ALTER TABLE alarm ADD COLUMN IF NOT EXISTS ack_note TEXT;
+ALTER TABLE alarm ADD COLUMN IF NOT EXISTS close_note TEXT;
+ALTER TABLE alarm ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
 CREATE INDEX IF NOT EXISTS idx_alarm_status_time
 ON alarm (status, started_at DESC);

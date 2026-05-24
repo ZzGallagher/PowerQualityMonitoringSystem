@@ -1,6 +1,6 @@
 window.LOW_VOLTAGE_TOPOLOGY_CONFIG = {
   stationCode: "01",
-  apiBaseUrl: "http://192.168.0.102:8000",
+  apiBaseUrl: "http://127.0.0.1:8000",
   svgAsset: "./assets/topology-lowvoltage.svg",
   canvas: { width: 1024, height: 340, viewBox: { x: 0, y: 220, width: 1024, height: 340 } },
   layout: {

@@ -240,8 +240,11 @@ CREATE TABLE IF NOT EXISTS alarm (
     recovered_at TEXT,
     acknowledged_at TEXT,
     acknowledged_by TEXT,
+    ack_note TEXT,
     closed_at TEXT,
     closed_by TEXT,
+    close_note TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     packet_id INTEGER,
     raw_json TEXT,
     FOREIGN KEY (packet_id) REFERENCES ingest_packet(id)

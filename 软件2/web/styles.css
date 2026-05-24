@@ -465,6 +465,12 @@ h1 {
   background: rgba(15, 139, 141, 0.2);
 }
 
+.hotspot.alarm {
+  border-color: #dc2626;
+  background: rgba(220, 38, 38, 0.16);
+  box-shadow: inset 0 0 0 2px rgba(220, 38, 38, 0.42);
+}
+
 .placeholder-card {
   padding: 34px;
 }
@@ -486,20 +492,61 @@ h1 {
   gap: 12px;
 }
 
+.alarm-event-layout {
+  display: grid;
+  gap: 12px;
+}
+
+.alarm-event-tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.alarm-event-tab {
+  min-width: 96px;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.alarm-event-tab.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.alarm-event-panel {
+  display: none;
+  gap: 12px;
+}
+
+.alarm-event-panel.active {
+  display: grid;
+}
+
 .history-query-panel,
-.history-results-panel {
+.history-results-panel,
+.alarm-results-panel {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
 }
 
-.history-query-panel {
+.history-query-panel,
+.alarm-query-panel {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   align-items: end;
   overflow: visible;
   padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
 }
 
 .history-page-time-fields {
@@ -515,6 +562,59 @@ h1 {
   flex: 0 0 130px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.alarm-filter-field {
+  display: grid;
+  gap: 5px;
+  flex: 1 1 190px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.alarm-filter-field.compact {
+  flex: 0 0 92px;
+}
+
+.alarm-filter-field input,
+.alarm-filter-field select {
+  width: 100%;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--text);
+  font: inherit;
+}
+
+.alarm-filter-field input {
+  padding: 0 10px;
+}
+
+.alarm-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.alarm-summary-strip article {
+  min-height: 66px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px 14px;
+}
+
+.alarm-summary-strip span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.alarm-summary-strip strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 22px;
 }
 
 .history-circuit-field {
@@ -688,6 +788,20 @@ h1 {
   font-size: 13px;
 }
 
+.alarm-data-table {
+  min-width: 1360px;
+}
+
+.alarm-data-table th,
+.alarm-data-table td {
+  text-align: center;
+}
+
+.alarm-data-table th:first-child,
+.alarm-data-table td:first-child {
+  text-align: center;
+}
+
 .history-data-table th,
 .history-data-table td {
   height: 38px;
@@ -702,6 +816,13 @@ h1 {
 .history-data-table td:first-child {
   border-left: 1px solid var(--line);
   text-align: left;
+}
+
+.alarm-data-table th,
+.alarm-data-table td,
+.alarm-data-table th:first-child,
+.alarm-data-table td:first-child {
+  text-align: center;
 }
 
 .history-data-table th {
@@ -725,6 +846,80 @@ h1 {
 .history-time-cell {
   color: #344960;
   font-family: Consolas, "Microsoft YaHei UI", monospace;
+}
+
+.level-badge,
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 6px;
+  padding: 0 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.level-critical {
+  background: rgba(194, 65, 12, 0.12);
+  color: #a03408;
+}
+
+.level-warning {
+  background: rgba(217, 119, 6, 0.14);
+  color: #8a4b05;
+}
+
+.level-info {
+  background: rgba(15, 139, 141, 0.12);
+  color: var(--accent);
+}
+
+.status-active {
+  background: rgba(220, 38, 38, 0.12);
+  color: #b91c1c;
+}
+
+.status-acknowledged {
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+}
+
+.status-recovered {
+  background: rgba(22, 131, 79, 0.12);
+  color: var(--good);
+}
+
+.status-closed {
+  background: rgba(102, 117, 138, 0.14);
+  color: #475569;
+}
+
+.row-action-button {
+  min-width: 54px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.row-action-button + .row-action-button {
+  margin-left: 5px;
+}
+
+.row-action-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.row-action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.basis-cell {
+  cursor: help;
 }
 
 .history-empty-state {
@@ -781,6 +976,117 @@ h1 {
 .dialog-header p {
   margin: 6px 0 0;
   color: var(--muted);
+}
+
+.alarm-action-dialog {
+  width: min(520px, calc(100vw - 56px));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0;
+  color: var(--text);
+  box-shadow: 0 24px 80px rgba(11, 18, 30, 0.32);
+}
+
+.alarm-action-dialog::backdrop {
+  background: rgba(15, 23, 42, 0.38);
+}
+
+.alarm-action-form {
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+}
+
+.alarm-action-form h2 {
+  margin: 0;
+  padding-right: 42px;
+  font-size: 20px;
+}
+
+.alarm-action-form p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.alarm-action-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.alarm-action-form input,
+.alarm-action-form textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--text);
+  font: inherit;
+}
+
+.alarm-action-form input {
+  height: 34px;
+  padding: 0 10px;
+}
+
+.alarm-action-form textarea {
+  resize: vertical;
+  min-height: 96px;
+  padding: 9px 10px;
+}
+
+.alarm-action-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.alarm-toast-host {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 60;
+  display: grid;
+  gap: 10px;
+  width: min(390px, calc(100vw - 44px));
+  pointer-events: none;
+}
+
+.alarm-toast {
+  border: 1px solid rgba(194, 65, 12, 0.28);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18);
+  padding: 12px;
+  pointer-events: auto;
+}
+
+.alarm-toast-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.alarm-toast strong {
+  display: block;
+  margin-top: 8px;
+  line-height: 1.35;
+}
+
+.alarm-toast p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.alarm-toast-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 .dialog-tabs {

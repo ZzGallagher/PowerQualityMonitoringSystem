@@ -212,8 +212,8 @@ async function ingestAlarms(client, packetId, packet, base) {
       const updated = await client.query(
         `
         UPDATE alarm
-        SET status = 'recovered', recovered_at = $1::timestamptz, packet_id = $2
-        WHERE external_id = $3 AND meter_id = $4 AND status = 'active'
+        SET status = 'recovered', recovered_at = $1::timestamptz, packet_id = $2, updated_at = now()
+        WHERE external_id = $3 AND meter_id = $4 AND status IN ('active', 'acknowledged')
         `,
         [alarmTime, packetId, externalId, base.meterId],
       );
@@ -309,8 +309,8 @@ async function ingestCommStatus(client, packetId, packet, base) {
     await client.query(
       `
       UPDATE alarm
-      SET status = 'recovered', recovered_at = $1::timestamptz, packet_id = $2
-      WHERE external_id = $3 AND status = 'active'
+      SET status = 'recovered', recovered_at = $1::timestamptz, packet_id = $2, updated_at = now()
+      WHERE external_id = $3 AND status IN ('active', 'acknowledged')
       `,
       [base.packetTimestamp, packetId, `comm:${base.meterId}`],
     );

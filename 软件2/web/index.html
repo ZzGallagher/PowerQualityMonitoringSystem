@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>软件2 - 低压组态监测</title>
-    <link rel="stylesheet" href="./styles.css?v=20260523-history-page-2" />
+    <link rel="stylesheet" href="./styles.css?v=20260524-alarm-events-4" />
   </head>
   <body>
     <div class="app-shell">
@@ -141,6 +141,123 @@
           </div>
         </section>
 
+        <section id="alarmEventPage" class="page">
+          <div class="alarm-event-layout">
+            <div class="alarm-event-tabs" role="tablist" aria-label="告警事件视图">
+              <button id="alarmTabButton" class="alarm-event-tab active" type="button" role="tab" aria-selected="true" data-alarm-event-tab="alarms">告警</button>
+              <button id="eventTabButton" class="alarm-event-tab" type="button" role="tab" aria-selected="false" data-alarm-event-tab="events">事件</button>
+            </div>
+
+            <section id="alarmPanel" class="alarm-event-panel active" aria-label="告警查询与管理">
+              <div class="alarm-query-panel">
+                <label class="alarm-filter-field">
+                  <span>状态</span>
+                  <select id="alarmStatusFilter">
+                    <option value="">全部</option>
+                    <option value="active">活动</option>
+                    <option value="acknowledged">已确认</option>
+                    <option value="recovered">已恢复</option>
+                    <option value="closed">已关闭</option>
+                  </select>
+                </label>
+                <label class="alarm-filter-field">
+                  <span>等级</span>
+                  <select id="alarmLevelFilter">
+                    <option value="">全部</option>
+                    <option value="critical">严重</option>
+                    <option value="warning">告警</option>
+                    <option value="info">提示</option>
+                  </select>
+                </label>
+                <label class="alarm-filter-field">
+                  <span>关键字</span>
+                  <input id="alarmKeywordFilter" type="text" placeholder="标题、仪表" />
+                </label>
+                <div id="alarmStartField"></div>
+                <div id="alarmEndField"></div>
+                <label class="alarm-filter-field compact">
+                  <span>每页</span>
+                  <select id="alarmPageSizeSelect">
+                    <option value="10">10</option>
+                    <option value="20" selected>20</option>
+                    <option value="50">50</option>
+                  </select>
+                </label>
+                <button id="alarmQueryButton" class="history-query-button" type="button">查询</button>
+              </div>
+              <div class="alarm-summary-strip" aria-label="告警摘要">
+                <article><span>活动</span><strong id="activeAlarmCount">--</strong></article>
+                <article><span>已确认</span><strong id="ackAlarmCount">--</strong></article>
+                <article><span>已恢复</span><strong id="recoveredAlarmCount">--</strong></article>
+                <article><span>已关闭</span><strong id="closedAlarmCount">--</strong></article>
+              </div>
+              <div class="alarm-results-panel">
+                <div class="history-result-toolbar">
+                  <div>
+                    <strong id="alarmResultTitle">告警列表</strong>
+                    <span id="alarmResultMeta">按开始时间倒序</span>
+                  </div>
+                  <div class="history-pagination">
+                    <button id="alarmPrevPageButton" class="tool-button" type="button" title="上一页">‹</button>
+                    <span id="alarmPageInfo">第 1 页</span>
+                    <button id="alarmNextPageButton" class="tool-button" type="button" title="下一页">›</button>
+                  </div>
+                </div>
+                <div id="alarmPageStatus" class="history-page-status"></div>
+                <div id="alarmTableHost" class="history-table-host"></div>
+              </div>
+            </section>
+
+            <section id="eventPanel" class="alarm-event-panel" aria-label="事件查询">
+              <div class="alarm-query-panel">
+                <label class="alarm-filter-field">
+                  <span>类型</span>
+                  <input id="eventTypeFilter" type="text" placeholder="alarm_ack / comm_status" />
+                </label>
+                <label class="alarm-filter-field">
+                  <span>等级</span>
+                  <select id="eventLevelFilter">
+                    <option value="">全部</option>
+                    <option value="critical">严重</option>
+                    <option value="warning">告警</option>
+                    <option value="info">提示</option>
+                  </select>
+                </label>
+                <label class="alarm-filter-field">
+                  <span>关键字</span>
+                  <input id="eventKeywordFilter" type="text" placeholder="标题、描述、仪表" />
+                </label>
+                <div id="eventStartField"></div>
+                <div id="eventEndField"></div>
+                <label class="alarm-filter-field compact">
+                  <span>每页</span>
+                  <select id="eventPageSizeSelect">
+                    <option value="10">10</option>
+                    <option value="20" selected>20</option>
+                    <option value="50">50</option>
+                  </select>
+                </label>
+                <button id="eventQueryButton" class="history-query-button" type="button">查询</button>
+              </div>
+              <div class="alarm-results-panel">
+                <div class="history-result-toolbar">
+                  <div>
+                    <strong>事件列表</strong>
+                    <span id="eventResultMeta">按事件时间倒序</span>
+                  </div>
+                  <div class="history-pagination">
+                    <button id="eventPrevPageButton" class="tool-button" type="button" title="上一页">‹</button>
+                    <span id="eventPageInfo">第 1 页</span>
+                    <button id="eventNextPageButton" class="tool-button" type="button" title="下一页">›</button>
+                  </div>
+                </div>
+                <div id="eventPageStatus" class="history-page-status"></div>
+                <div id="eventTableHost" class="history-table-host"></div>
+              </div>
+            </section>
+          </div>
+        </section>
+
         <section id="placeholderPage" class="page">
           <div class="placeholder-card">
             <h2 id="placeholderTitle"></h2>
@@ -157,7 +274,32 @@
       <div id="dialogContent"></div>
     </dialog>
 
-    <script src="./topology-config.js"></script>
-    <script src="./app.js?v=20260523-history-page-2"></script>
+    <dialog id="alarmActionDialog" class="alarm-action-dialog">
+      <form method="dialog">
+        <button class="icon-button close-button" value="cancel" aria-label="关闭">×</button>
+      </form>
+      <form id="alarmActionForm" class="alarm-action-form">
+        <h2 id="alarmActionTitle">处理告警</h2>
+        <p id="alarmActionMeta"></p>
+        <label>
+          <span>处理人</span>
+          <input id="alarmActionOperator" type="text" value="值班员" />
+        </label>
+        <label>
+          <span>处理说明</span>
+          <textarea id="alarmActionNote" rows="4" placeholder="填写确认原因、处理过程或关闭说明"></textarea>
+        </label>
+        <div id="alarmActionStatus" class="history-page-status"></div>
+        <div class="alarm-action-buttons">
+          <button class="tool-button" type="button" value="cancel" data-close-alarm-action>取消</button>
+          <button id="alarmActionSubmit" class="history-query-button" type="submit">提交</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="alarmToastHost" class="alarm-toast-host" aria-live="polite" aria-label="实时告警提示"></div>
+
+    <script src="./topology-config.js?v=20260524-local-api"></script>
+    <script src="./app.js?v=20260524-alarm-events-10"></script>
   </body>
 </html>

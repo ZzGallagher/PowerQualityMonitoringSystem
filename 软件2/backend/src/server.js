@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const { config } = require("./config");
-const { closePool, query } = require("./db");
+const { closePool, query, withTransaction } = require("./db");
 
 const app = express();
 
@@ -358,29 +358,279 @@ function historyTimeKey(value) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
 }
 
-app.get("/api/alarms", async (_req, res) => {
-  const result = await query(
-    `
-    SELECT *
-    FROM alarm
-    ORDER BY started_at DESC
-    LIMIT 200
-    `,
-  );
-  res.json({ ok: true, alarms: result.rows });
+app.get("/api/alarms", async (req, res) => {
+  try {
+    const page = boundedNumber(req.query.page, 1, 1, 100000);
+    const pageSize = boundedNumber(req.query.pageSize, 20, 1, 500);
+    const { whereSql, params } = alarmEventFilters(req.query, "a", "started_at", {
+      statusColumn: "status",
+      levelColumn: "level",
+      typeColumn: "alarm_type",
+    });
+    const countResult = await query(`SELECT COUNT(*)::int AS total FROM alarm a ${whereSql}`, params);
+    const total = Number(countResult.rows[0]?.total || 0);
+    const result = await query(
+      `
+      SELECT
+        a.*,
+        COALESCE(a.circuit_id, alarm_mapping.circuit_id) AS display_circuit_id,
+        COALESCE(alarm_circuit.name, mapping_circuit.name, alarm_mapping.display_name) AS display_circuit_name
+      FROM alarm a
+      LEFT JOIN LATERAL (
+        SELECT pm.circuit_id, pm.display_name
+        FROM point_mapping pm
+        WHERE pm.meter_id = a.meter_id
+          AND (pm.point_code = a.point_code OR a.point_code IS NULL)
+        ORDER BY CASE WHEN pm.point_code = a.point_code THEN 0 ELSE 1 END, pm.is_primary DESC
+        LIMIT 1
+      ) alarm_mapping ON true
+      LEFT JOIN circuit alarm_circuit ON alarm_circuit.id = a.circuit_id
+      LEFT JOIN circuit mapping_circuit ON mapping_circuit.id = alarm_mapping.circuit_id
+      ${whereSql}
+      ORDER BY started_at DESC, id DESC
+      LIMIT $${params.length + 1}
+      OFFSET $${params.length + 2}
+      `,
+      [...params, pageSize, (page - 1) * pageSize],
+    );
+    res.json({
+      ok: true,
+      page,
+      pageSize,
+      total,
+      hasNext: page * pageSize < total,
+      alarms: result.rows,
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: "alarm query failed" });
+  }
 });
 
-app.get("/api/events", async (_req, res) => {
+app.get("/api/alarms/:id", async (req, res) => {
+  const id = boundedNumber(req.params.id, 0, 0, Number.MAX_SAFE_INTEGER);
   const result = await query(
     `
-    SELECT *
-    FROM event
-    ORDER BY event_time DESC
-    LIMIT 200
+    SELECT
+      a.*,
+      COALESCE(a.circuit_id, alarm_mapping.circuit_id) AS display_circuit_id,
+      COALESCE(alarm_circuit.name, mapping_circuit.name, alarm_mapping.display_name) AS display_circuit_name
+    FROM alarm a
+    LEFT JOIN LATERAL (
+      SELECT pm.circuit_id, pm.display_name
+      FROM point_mapping pm
+      WHERE pm.meter_id = a.meter_id
+        AND (pm.point_code = a.point_code OR a.point_code IS NULL)
+      ORDER BY CASE WHEN pm.point_code = a.point_code THEN 0 ELSE 1 END, pm.is_primary DESC
+      LIMIT 1
+    ) alarm_mapping ON true
+    LEFT JOIN circuit alarm_circuit ON alarm_circuit.id = a.circuit_id
+    LEFT JOIN circuit mapping_circuit ON mapping_circuit.id = alarm_mapping.circuit_id
+    WHERE a.id = $1
     `,
+    [id],
   );
-  res.json({ ok: true, events: result.rows });
+  if (!result.rows[0]) {
+    res.status(404).json({ ok: false, error: "alarm not found" });
+    return;
+  }
+  res.json({ ok: true, alarm: result.rows[0] });
 });
+
+app.post("/api/alarms/:id/ack", async (req, res) => {
+  try {
+    const alarm = await updateAlarmLifecycle(req.params.id, "ack", req.body || {});
+    res.json({ ok: true, alarm });
+  } catch (error) {
+    alarmLifecycleError(res, error);
+  }
+});
+
+app.post("/api/alarms/:id/close", async (req, res) => {
+  try {
+    const alarm = await updateAlarmLifecycle(req.params.id, "close", req.body || {});
+    res.json({ ok: true, alarm });
+  } catch (error) {
+    alarmLifecycleError(res, error);
+  }
+});
+
+app.get("/api/events", async (req, res) => {
+  try {
+    const page = boundedNumber(req.query.page, 1, 1, 100000);
+    const pageSize = boundedNumber(req.query.pageSize, 20, 1, 500);
+    const { whereSql, params } = alarmEventFilters(req.query, "e", "event_time", {
+      levelColumn: "level",
+      typeColumn: "event_type",
+    });
+    const countResult = await query(`SELECT COUNT(*)::int AS total FROM event e ${whereSql}`, params);
+    const total = Number(countResult.rows[0]?.total || 0);
+    const result = await query(
+      `
+      SELECT *
+      FROM event e
+      ${whereSql}
+      ORDER BY event_time DESC, id DESC
+      LIMIT $${params.length + 1}
+      OFFSET $${params.length + 2}
+      `,
+      [...params, pageSize, (page - 1) * pageSize],
+    );
+    res.json({
+      ok: true,
+      page,
+      pageSize,
+      total,
+      hasNext: page * pageSize < total,
+      events: result.rows,
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: "event query failed" });
+  }
+});
+
+function alarmEventFilters(queryParams, alias, timeColumn, options = {}) {
+  const params = [];
+  const conditions = [];
+  const column = (name) => `${alias}.${name}`;
+  const addTextList = (queryName, columnName) => {
+    const values = stringList(queryParams[queryName]);
+    if (values.length === 0 || !columnName) return;
+    params.push(values);
+    conditions.push(`${column(columnName)} = ANY($${params.length})`);
+  };
+
+  addTextList("status", options.statusColumn);
+  addTextList("level", options.levelColumn);
+  addTextList("type", options.typeColumn);
+  addTextList("eventType", options.typeColumn);
+  addTextList("alarmType", options.typeColumn);
+  addTextList("meterId", "meter_id");
+  if (options.statusColumn) {
+    addTextList("circuitId", "circuit_id");
+    addTextList("pointCode", "point_code");
+  }
+
+  const startTime = parseHistoryDate(queryParams.startTime);
+  const endTime = parseHistoryDate(queryParams.endTime);
+  if (startTime) {
+    params.push(startTime.toISOString());
+    conditions.push(`${column(timeColumn)} >= $${params.length}::timestamptz`);
+  }
+  if (endTime) {
+    params.push(endTime.toISOString());
+    conditions.push(`${column(timeColumn)} <= $${params.length}::timestamptz`);
+  }
+
+  const keyword = String(queryParams.keyword || "").trim();
+  if (keyword) {
+    params.push(`%${keyword}%`);
+    const textColumns = ["title", "description", "meter_id"];
+    if (options.statusColumn) textColumns.push("point_code", "alarm_type", "status", "acknowledged_by", "closed_by");
+    if (options.typeColumn && !options.statusColumn) textColumns.push("event_type");
+    conditions.push(`(${textColumns.map((name) => `COALESCE(${column(name)}, '') ILIKE $${params.length}`).join(" OR ")})`);
+  }
+
+  return {
+    whereSql: conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "",
+    params,
+  };
+}
+
+async function updateAlarmLifecycle(rawId, action, body) {
+  const id = boundedNumber(rawId, 0, 0, Number.MAX_SAFE_INTEGER);
+  const operator = String(body.operator || "值班员").trim() || "值班员";
+  const note = String(body.note || "").trim();
+
+  return withTransaction(async (client) => {
+    const current = await client.query("SELECT * FROM alarm WHERE id = $1 FOR UPDATE", [id]);
+    const alarm = current.rows[0];
+    if (!alarm) throw lifecycleError("not_found", "alarm not found");
+
+    if (action === "ack") {
+      if (alarm.status !== "active") throw lifecycleError("conflict", "only active alarms can be acknowledged");
+      const result = await client.query(
+        `
+        UPDATE alarm
+        SET status = 'acknowledged',
+            acknowledged_at = now(),
+            acknowledged_by = $2,
+            ack_note = $3,
+            updated_at = now()
+        WHERE id = $1
+        RETURNING *
+        `,
+        [id, operator, note],
+      );
+      await insertLifecycleEvent(client, result.rows[0], "alarm_ack", "告警确认", operator, note);
+      return result.rows[0];
+    }
+
+    if (!["acknowledged", "recovered"].includes(alarm.status)) {
+      throw lifecycleError("conflict", "only acknowledged or recovered alarms can be closed");
+    }
+    const result = await client.query(
+      `
+      UPDATE alarm
+      SET status = 'closed',
+          closed_at = now(),
+          closed_by = $2,
+          close_note = $3,
+          updated_at = now()
+      WHERE id = $1
+      RETURNING *
+      `,
+      [id, operator, note],
+    );
+    await insertLifecycleEvent(client, result.rows[0], "alarm_close", "告警关闭", operator, note);
+    return result.rows[0];
+  });
+}
+
+async function insertLifecycleEvent(client, alarm, eventType, title, operator, note) {
+  await client.query(
+    `
+    INSERT INTO event (
+      external_id, station_id, meter_id, event_type, level, title,
+      description, event_time, raw_json
+    )
+    VALUES ($1, $2, $3, $4, 'info', $5, $6, now(), $7::jsonb)
+    `,
+    [
+      alarm.external_id || `alarm:${alarm.id}`,
+      alarm.station_id,
+      alarm.meter_id,
+      eventType,
+      title,
+      `${operator}${note ? `：${note}` : ""}`,
+      JSON.stringify({ alarmId: alarm.id, operator, note, status: alarm.status }),
+    ],
+  );
+}
+
+function stringList(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function lifecycleError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function alarmLifecycleError(res, error) {
+  if (error.code === "not_found") {
+    res.status(404).json({ ok: false, error: error.message });
+    return;
+  }
+  if (error.code === "conflict") {
+    res.status(409).json({ ok: false, error: error.message });
+    return;
+  }
+  res.status(500).json({ ok: false, error: "alarm lifecycle update failed" });
+}
 
 app.get("/api/interfaces/status", async (_req, res) => {
   const result = await query(

@@ -13,6 +13,8 @@ const NAV_ITEMS = [
 const TOPOLOGY_CONFIG = globalThis.LOW_VOLTAGE_TOPOLOGY_CONFIG;
 const STATION_CODE = TOPOLOGY_CONFIG.stationCode;
 const TOPOLOGY_API_BASE_URL = normalizeApiBaseUrl(TOPOLOGY_CONFIG.apiBaseUrl);
+const COLLECTOR_ONLINE_MAX_AGE_MS = 60 * 1000;
+const ALARM_POLL_INTERVAL_MS = 5000;
 
 const PLACEHOLDER_COPY = {
   history: "后续承接回路、电参量、时间范围和统计值查询。低压组态监测页弹窗中的回路编号会作为默认查询条件。",
@@ -94,6 +96,46 @@ const historyPageState = {
   rows: [],
   columns: HISTORY_TABLE_COLUMNS,
 };
+const ALARM_STATUS_LABELS = {
+  active: "活动",
+  acknowledged: "已确认",
+  recovered: "已恢复",
+  closed: "已关闭",
+};
+const ALARM_LEVEL_LABELS = {
+  critical: "严重",
+  warning: "告警",
+  info: "提示",
+};
+const alarmEventState = {
+  initialized: false,
+  activeTab: "alarms",
+  actionType: "",
+  actionAlarm: null,
+  alarms: {
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasNext: false,
+    status: "idle",
+    message: "",
+    rows: [],
+    summary: { active: "--", acknowledged: "--", recovered: "--", closed: "--" },
+  },
+  events: {
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasNext: false,
+    status: "idle",
+    message: "",
+    rows: [],
+  },
+};
+const seenActiveAlarmIds = new Set();
+const dismissedAlarmToastIds = new Set();
+const activeAlarmCircuitIds = new Set();
+let alarmPopupPrimed = false;
 
 function buildCircuits() {
   return TOPOLOGY_CONFIG.cabinets.flatMap((cabinet, cabinetIndex) => {
@@ -125,36 +167,93 @@ function buildCircuits() {
 
 async function init() {
   initCollectorStatusIndicator();
+  refreshCollectorStatus();
+  setInterval(refreshCollectorStatus, 5000);
   renderNavigation();
   renderSummary();
   initHistoryPage();
+  initAlarmEventPage();
   await loadTopologySvg();
   renderDynamicLayers();
   refreshTopologyState();
   refreshRealtimeState();
+  refreshAlarmPopupState();
   initZoomControls();
   tickRealtime();
   setInterval(tickRealtime, 2000);
   setInterval(refreshTopologyState, 2000);
   setInterval(refreshRealtimeState, 2000);
+  setInterval(refreshAlarmPopupState, ALARM_POLL_INTERVAL_MS);
 }
 
 function initCollectorStatusIndicator() {
   const status = document.querySelector("#collectorStatus");
   if (!status) return;
 
-  const syncStatusClass = () => {
-    const isOffline = status.textContent.includes("离线");
-    status.classList.toggle("offline", isOffline);
-    status.classList.toggle("online", !isOffline);
-  };
+  setCollectorStatus("正在检测采集状态", false);
+}
 
-  syncStatusClass();
-  new MutationObserver(syncStatusClass).observe(status, {
-    childList: true,
-    characterData: true,
-    subtree: true,
-  });
+async function refreshCollectorStatus() {
+  if (!TOPOLOGY_API_BASE_URL) {
+    setCollectorStatus("采集状态未知", false);
+    return;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
+    const response = await fetch(topologyApiUrl("/api/interfaces/status"), {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (!response.ok) throw new Error("collector status unavailable");
+    const payload = await response.json();
+    applyCollectorStatus(payload.interfaces ?? []);
+  } catch {
+    setCollectorStatus("数据采集软件离线", false);
+  }
+}
+
+function applyCollectorStatus(interfaces) {
+  const latest = interfaces
+    .map((item) => {
+      const time = parseCollectorStatusTime(item.last_received_at ?? item.lastReceivedAt ?? item.last_packet_at ?? item.lastPacketAt ?? item.updated_at ?? item.updatedAt);
+      return {
+        status: String(item.status ?? "unknown").toLowerCase(),
+        time,
+      };
+    })
+    .filter((item) => item.time !== null)
+    .sort((left, right) => right.time - left.time)[0];
+
+  if (!latest) {
+    setCollectorStatus("数据采集软件离线", false);
+    return;
+  }
+
+  const isFresh = Date.now() - latest.time.getTime() <= COLLECTOR_ONLINE_MAX_AGE_MS;
+  const isHealthy = ["online", "ok", "good"].includes(latest.status);
+  setCollectorStatus(isFresh && isHealthy ? "数据采集软件在线" : "数据采集软件离线", isFresh && isHealthy, latest.time);
+}
+
+function setCollectorStatus(text, isOnline, sampleTime = null) {
+  const status = document.querySelector("#collectorStatus");
+  if (!status) return;
+  status.textContent = text;
+  status.classList.toggle("online", isOnline);
+  status.classList.toggle("offline", !isOnline);
+  if (sampleTime) {
+    status.title = `最近接收: ${formatBeijingDateTime(sampleTime)}`;
+  } else {
+    status.removeAttribute("title");
+  }
+}
+
+function parseCollectorStatusTime(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function renderNavigation() {
@@ -180,14 +279,18 @@ function setActivePage(page) {
 
   const isOverview = page === "overview";
   const isHistory = page === "history";
+  const isAlarmEvent = page === "alarms";
   document.querySelector("#overviewPage").classList.toggle("page-active", isOverview);
   document.querySelector("#historyPage").classList.toggle("page-active", isHistory);
-  document.querySelector("#placeholderPage").classList.toggle("page-active", !isOverview && !isHistory);
+  document.querySelector("#alarmEventPage").classList.toggle("page-active", isAlarmEvent);
+  document.querySelector("#placeholderPage").classList.toggle("page-active", !isOverview && !isHistory && !isAlarmEvent);
   const label = NAV_ITEMS.find(([key]) => key === page)?.[1] ?? "低压组态监测";
   document.querySelector("#pageTitle").textContent = label;
 
   if (isHistory) {
     activateHistoryPage();
+  } else if (isAlarmEvent) {
+    activateAlarmEventPage();
   } else if (!isOverview) {
     document.querySelector("#placeholderTitle").textContent = label;
     document.querySelector("#placeholderBody").textContent = PLACEHOLDER_COPY[page] ?? "";
@@ -563,6 +666,457 @@ function renderHistoryPageState() {
   document.querySelector("#historyTableHost").innerHTML = historyTableMarkup();
 }
 
+function initAlarmEventPage() {
+  if (alarmEventState.initialized) return;
+  const end = new Date();
+  const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+  document.querySelector("#alarmStartField").innerHTML = historyTimeField("开始时间", "alarmStart", formatBeijingInputDateTime(start));
+  document.querySelector("#alarmEndField").innerHTML = historyTimeField("结束时间", "alarmEnd", formatBeijingInputDateTime(end));
+  document.querySelector("#eventStartField").innerHTML = historyTimeField("开始时间", "eventStart", formatBeijingInputDateTime(start));
+  document.querySelector("#eventEndField").innerHTML = historyTimeField("结束时间", "eventEnd", formatBeijingInputDateTime(end));
+
+  document.querySelectorAll("[data-alarm-event-tab]").forEach((button) => {
+    button.addEventListener("click", () => switchAlarmEventTab(button.dataset.alarmEventTab));
+  });
+  document.querySelector("#alarmQueryButton").addEventListener("click", () => {
+    alarmEventState.alarms.page = 1;
+    loadAlarmData();
+  });
+  document.querySelector("#eventQueryButton").addEventListener("click", () => {
+    alarmEventState.events.page = 1;
+    loadEventData();
+  });
+  document.querySelector("#alarmPageSizeSelect").addEventListener("change", (event) => {
+    alarmEventState.alarms.pageSize = Number(event.target.value) || 20;
+    alarmEventState.alarms.page = 1;
+    if (alarmEventState.alarms.status === "success") loadAlarmData();
+  });
+  document.querySelector("#eventPageSizeSelect").addEventListener("change", (event) => {
+    alarmEventState.events.pageSize = Number(event.target.value) || 20;
+    alarmEventState.events.page = 1;
+    if (alarmEventState.events.status === "success") loadEventData();
+  });
+  document.querySelector("#alarmPrevPageButton").addEventListener("click", () => {
+    if (alarmEventState.alarms.page <= 1 || alarmEventState.alarms.status === "loading") return;
+    alarmEventState.alarms.page -= 1;
+    loadAlarmData();
+  });
+  document.querySelector("#alarmNextPageButton").addEventListener("click", () => {
+    if (!alarmEventState.alarms.hasNext || alarmEventState.alarms.status === "loading") return;
+    alarmEventState.alarms.page += 1;
+    loadAlarmData();
+  });
+  document.querySelector("#eventPrevPageButton").addEventListener("click", () => {
+    if (alarmEventState.events.page <= 1 || alarmEventState.events.status === "loading") return;
+    alarmEventState.events.page -= 1;
+    loadEventData();
+  });
+  document.querySelector("#eventNextPageButton").addEventListener("click", () => {
+    if (!alarmEventState.events.hasNext || alarmEventState.events.status === "loading") return;
+    alarmEventState.events.page += 1;
+    loadEventData();
+  });
+  document.querySelector("#alarmTableHost").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-alarm-action]");
+    if (!button) return;
+    openAlarmActionDialog(button.dataset.alarmAction, button.dataset.alarmId);
+  });
+  document.querySelector("#alarmActionForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    submitAlarmAction();
+  });
+  document.querySelector("[data-close-alarm-action]").addEventListener("click", () => {
+    document.querySelector("#alarmActionDialog").close();
+  });
+  document.querySelector("#alarmToastHost").addEventListener("click", (event) => {
+    const viewButton = event.target.closest("[data-view-alarm-page]");
+    const dismissButton = event.target.closest("[data-dismiss-alarm-toast]");
+    if (viewButton) {
+      setActivePage("alarms");
+      const navButton = document.querySelector('[data-page="alarms"]');
+      if (navButton) navButton.focus();
+    }
+    if (dismissButton) {
+      dismissedAlarmToastIds.add(String(dismissButton.dataset.dismissAlarmToast));
+      renderAlarmToasts([]);
+    }
+  });
+
+  alarmEventState.initialized = true;
+  renderAlarmEventState();
+}
+
+function activateAlarmEventPage() {
+  if (!alarmEventState.initialized) initAlarmEventPage();
+  if (alarmEventState.activeTab === "alarms" && alarmEventState.alarms.status === "idle") loadAlarmData();
+  if (alarmEventState.activeTab === "events" && alarmEventState.events.status === "idle") loadEventData();
+}
+
+function switchAlarmEventTab(tab) {
+  alarmEventState.activeTab = tab === "events" ? "events" : "alarms";
+  renderAlarmEventState();
+  if (alarmEventState.activeTab === "alarms" && alarmEventState.alarms.status === "idle") loadAlarmData();
+  if (alarmEventState.activeTab === "events" && alarmEventState.events.status === "idle") loadEventData();
+}
+
+async function loadAlarmData() {
+  if (!TOPOLOGY_API_BASE_URL) {
+    alarmEventState.alarms.status = "error";
+    alarmEventState.alarms.message = "未配置后台接口地址。";
+    renderAlarmEventState();
+    return;
+  }
+
+  alarmEventState.alarms.status = "loading";
+  alarmEventState.alarms.message = "";
+  renderAlarmEventState();
+
+  try {
+    const params = alarmQueryParams();
+    const response = await fetch(topologyApiUrl(`/api/alarms?${params.toString()}`), { cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) throw new Error(payload.error || "alarm query failed");
+    alarmEventState.alarms.status = "success";
+    alarmEventState.alarms.rows = payload.alarms ?? [];
+    alarmEventState.alarms.total = Number(payload.total ?? 0);
+    alarmEventState.alarms.hasNext = Boolean(payload.hasNext);
+    await loadAlarmSummary();
+  } catch {
+    alarmEventState.alarms.status = "error";
+    alarmEventState.alarms.message = "告警查询失败，请检查后台服务和数据库连接。";
+    alarmEventState.alarms.rows = [];
+    alarmEventState.alarms.total = 0;
+    alarmEventState.alarms.hasNext = false;
+  }
+
+  renderAlarmEventState();
+}
+
+async function loadAlarmSummary() {
+  const statuses = ["active", "acknowledged", "recovered", "closed"];
+  const results = await Promise.all(statuses.map(async (status) => {
+    const params = alarmQueryParams();
+    params.delete("status");
+    params.set("status", status);
+    params.set("page", "1");
+    params.set("pageSize", "1");
+    const response = await fetch(topologyApiUrl(`/api/alarms?${params.toString()}`), { cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) return [status, "--"];
+    return [status, Number(payload.total ?? 0)];
+  }));
+  alarmEventState.alarms.summary = Object.fromEntries(results);
+}
+
+async function loadEventData() {
+  if (!TOPOLOGY_API_BASE_URL) {
+    alarmEventState.events.status = "error";
+    alarmEventState.events.message = "未配置后台接口地址。";
+    renderAlarmEventState();
+    return;
+  }
+
+  alarmEventState.events.status = "loading";
+  alarmEventState.events.message = "";
+  renderAlarmEventState();
+
+  try {
+    const params = eventQueryParams();
+    const response = await fetch(topologyApiUrl(`/api/events?${params.toString()}`), { cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) throw new Error(payload.error || "event query failed");
+    alarmEventState.events.status = "success";
+    alarmEventState.events.rows = payload.events ?? [];
+    alarmEventState.events.total = Number(payload.total ?? 0);
+    alarmEventState.events.hasNext = Boolean(payload.hasNext);
+  } catch {
+    alarmEventState.events.status = "error";
+    alarmEventState.events.message = "事件查询失败，请检查后台服务和数据库连接。";
+    alarmEventState.events.rows = [];
+    alarmEventState.events.total = 0;
+    alarmEventState.events.hasNext = false;
+  }
+
+  renderAlarmEventState();
+}
+
+function alarmQueryParams() {
+  const params = new URLSearchParams({
+    page: String(alarmEventState.alarms.page),
+    pageSize: String(alarmEventState.alarms.pageSize),
+  });
+  addOptionalParam(params, "status", document.querySelector("#alarmStatusFilter").value);
+  addOptionalParam(params, "level", document.querySelector("#alarmLevelFilter").value);
+  addOptionalParam(params, "keyword", document.querySelector("#alarmKeywordFilter").value.trim());
+  addTimeParams(params, "alarmStart", "alarmEnd");
+  return params;
+}
+
+function eventQueryParams() {
+  const params = new URLSearchParams({
+    page: String(alarmEventState.events.page),
+    pageSize: String(alarmEventState.events.pageSize),
+  });
+  addOptionalParam(params, "eventType", document.querySelector("#eventTypeFilter").value.trim());
+  addOptionalParam(params, "level", document.querySelector("#eventLevelFilter").value);
+  addOptionalParam(params, "keyword", document.querySelector("#eventKeywordFilter").value.trim());
+  addTimeParams(params, "eventStart", "eventEnd");
+  return params;
+}
+
+function addTimeParams(params, startPrefix, endPrefix) {
+  const startTime = parseBeijingInputDateTime(readHistoryTimeValue(startPrefix));
+  const endTime = parseBeijingInputDateTime(readHistoryTimeValue(endPrefix));
+  if (startTime) params.set("startTime", startTime.toISOString());
+  if (endTime) params.set("endTime", endTime.toISOString());
+}
+
+function addOptionalParam(params, key, value) {
+  if (value) params.set(key, value);
+}
+
+function renderAlarmEventState() {
+  document.querySelectorAll("[data-alarm-event-tab]").forEach((button) => {
+    const active = button.dataset.alarmEventTab === alarmEventState.activeTab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  document.querySelector("#alarmPanel").classList.toggle("active", alarmEventState.activeTab === "alarms");
+  document.querySelector("#eventPanel").classList.toggle("active", alarmEventState.activeTab === "events");
+  renderAlarmTableState();
+  renderEventTableState();
+}
+
+function renderAlarmTableState() {
+  const state = alarmEventState.alarms;
+  const totalPage = state.total > 0 ? Math.ceil(state.total / state.pageSize) : 1;
+  const startIndex = state.total === 0 ? 0 : (state.page - 1) * state.pageSize + 1;
+  const endIndex = Math.min(state.total, state.page * state.pageSize);
+  document.querySelector("#activeAlarmCount").textContent = state.summary.active ?? "--";
+  document.querySelector("#ackAlarmCount").textContent = state.summary.acknowledged ?? "--";
+  document.querySelector("#recoveredAlarmCount").textContent = state.summary.recovered ?? "--";
+  document.querySelector("#closedAlarmCount").textContent = state.summary.closed ?? "--";
+  document.querySelector("#alarmResultMeta").textContent = state.total > 0 ? `共 ${state.total} 条，当前 ${startIndex}-${endIndex} 条` : "按开始时间倒序";
+  document.querySelector("#alarmPageInfo").textContent = `第 ${state.page} / ${totalPage} 页`;
+  document.querySelector("#alarmPrevPageButton").disabled = state.status === "loading" || state.page <= 1;
+  document.querySelector("#alarmNextPageButton").disabled = state.status === "loading" || !state.hasNext;
+  document.querySelector("#alarmQueryButton").disabled = state.status === "loading";
+  const statusNode = document.querySelector("#alarmPageStatus");
+  statusNode.className = `history-page-status ${state.status === "error" ? "error" : ""}`;
+  statusNode.textContent = state.status === "loading" ? "正在查询告警..." : state.status === "error" ? state.message : "";
+  document.querySelector("#alarmTableHost").innerHTML = alarmTableMarkup();
+}
+
+function renderEventTableState() {
+  const state = alarmEventState.events;
+  const totalPage = state.total > 0 ? Math.ceil(state.total / state.pageSize) : 1;
+  const startIndex = state.total === 0 ? 0 : (state.page - 1) * state.pageSize + 1;
+  const endIndex = Math.min(state.total, state.page * state.pageSize);
+  document.querySelector("#eventResultMeta").textContent = state.total > 0 ? `共 ${state.total} 条，当前 ${startIndex}-${endIndex} 条` : "按事件时间倒序";
+  document.querySelector("#eventPageInfo").textContent = `第 ${state.page} / ${totalPage} 页`;
+  document.querySelector("#eventPrevPageButton").disabled = state.status === "loading" || state.page <= 1;
+  document.querySelector("#eventNextPageButton").disabled = state.status === "loading" || !state.hasNext;
+  document.querySelector("#eventQueryButton").disabled = state.status === "loading";
+  const statusNode = document.querySelector("#eventPageStatus");
+  statusNode.className = `history-page-status ${state.status === "error" ? "error" : ""}`;
+  statusNode.textContent = state.status === "loading" ? "正在查询事件..." : state.status === "error" ? state.message : "";
+  document.querySelector("#eventTableHost").innerHTML = eventTableMarkup();
+}
+
+function alarmTableMarkup() {
+  const state = alarmEventState.alarms;
+  if (state.status === "idle") return `<div class="history-empty-state">设置筛选条件后点击查询。</div>`;
+  if (state.status === "loading") return `<div class="history-empty-state">告警加载中...</div>`;
+  if (state.status === "error") return "";
+  if (state.rows.length === 0) return `<div class="empty-state">当前条件下暂无告警。</div>`;
+
+  return `<table class="history-data-table alarm-data-table">
+    <thead>
+      <tr>
+        <th>开始时间</th>
+        <th>恢复时间</th>
+        <th>回路编号 / 回路名称</th>
+        <th>告警项目</th>
+        <th>等级</th>
+        <th>状态</th>
+        <th>触发值</th>
+        <th>阈值</th>
+        <th>确认人</th>
+        <th>关闭人</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${state.rows.map((alarm) => `<tr>
+        <td class="history-time-cell">${escapeHtml(formatNullableTime(alarm.started_at))}</td>
+        <td class="history-time-cell">${escapeHtml(formatNullableTime(alarm.recovered_at))}</td>
+        <td>${escapeHtml(alarmCircuitText(alarm))}</td>
+        <td>${escapeHtml(alarm.title ?? "--")}</td>
+        <td>${levelBadge(alarm.level)}</td>
+        <td>${statusBadge(alarm.status)}</td>
+        <td>${escapeHtml(formatValueWithUnit(alarm.trigger_value, alarm.trigger_unit))}</td>
+        <td class="basis-cell" title="${escapeHtml(alarmBasisText(alarm))}">${escapeHtml(limitText(alarm.min_value, alarm.max_value, alarm.trigger_unit))}</td>
+        <td>${escapeHtml(alarm.acknowledged_by ?? "--")}</td>
+        <td>${escapeHtml(alarm.closed_by ?? "--")}</td>
+        <td>${alarmActionButtons(alarm)}</td>
+      </tr>`).join("")}
+    </tbody>
+  </table>`;
+}
+
+function eventTableMarkup() {
+  const state = alarmEventState.events;
+  if (state.status === "idle") return `<div class="history-empty-state">设置筛选条件后点击查询。</div>`;
+  if (state.status === "loading") return `<div class="history-empty-state">事件加载中...</div>`;
+  if (state.status === "error") return "";
+  if (state.rows.length === 0) return `<div class="empty-state">当前条件下暂无事件。</div>`;
+
+  return `<table class="history-data-table">
+    <thead>
+      <tr>
+        <th>事件时间</th>
+        <th>类型</th>
+        <th>等级</th>
+        <th>仪表</th>
+        <th>标题</th>
+        <th>描述</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${state.rows.map((event) => `<tr>
+        <td class="history-time-cell">${escapeHtml(formatNullableTime(event.event_time))}</td>
+        <td>${escapeHtml(event.event_type ?? "--")}</td>
+        <td>${levelBadge(event.level)}</td>
+        <td>${escapeHtml(event.meter_id ?? "--")}</td>
+        <td>${escapeHtml(event.title ?? "--")}</td>
+        <td>${escapeHtml(event.description ?? "--")}</td>
+      </tr>`).join("")}
+    </tbody>
+  </table>`;
+}
+
+function alarmActionButtons(alarm) {
+  const canAck = alarm.status === "active";
+  const canClose = alarm.status === "acknowledged" || alarm.status === "recovered";
+  return `<button class="row-action-button" type="button" data-alarm-action="ack" data-alarm-id="${alarm.id}" ${canAck ? "" : "disabled"}>确认</button>
+    <button class="row-action-button" type="button" data-alarm-action="close" data-alarm-id="${alarm.id}" ${canClose ? "" : "disabled"}>关闭</button>`;
+}
+
+function openAlarmActionDialog(action, alarmId) {
+  const alarm = alarmEventState.alarms.rows.find((item) => String(item.id) === String(alarmId));
+  if (!alarm) return;
+  alarmEventState.actionType = action === "close" ? "close" : "ack";
+  alarmEventState.actionAlarm = alarm;
+  document.querySelector("#alarmActionTitle").textContent = alarmEventState.actionType === "close" ? "关闭告警" : "确认告警";
+  document.querySelector("#alarmActionMeta").textContent = `${alarm.title ?? "告警"} / ${alarmCircuitText(alarm)} / ${formatNullableTime(alarm.started_at)}`;
+  document.querySelector("#alarmActionOperator").value = "值班员";
+  document.querySelector("#alarmActionNote").value = "";
+  document.querySelector("#alarmActionStatus").textContent = "";
+  document.querySelector("#alarmActionSubmit").disabled = false;
+  document.querySelector("#alarmActionDialog").showModal();
+}
+
+async function submitAlarmAction() {
+  const alarm = alarmEventState.actionAlarm;
+  if (!alarm) return;
+  const action = alarmEventState.actionType;
+  const submitButton = document.querySelector("#alarmActionSubmit");
+  const statusNode = document.querySelector("#alarmActionStatus");
+  submitButton.disabled = true;
+  statusNode.className = "history-page-status";
+  statusNode.textContent = "正在提交...";
+
+  try {
+    const response = await fetch(topologyApiUrl(`/api/alarms/${alarm.id}/${action}`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        operator: document.querySelector("#alarmActionOperator").value.trim() || "值班员",
+        note: document.querySelector("#alarmActionNote").value.trim(),
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) throw new Error(payload.error || "alarm action failed");
+    document.querySelector("#alarmActionDialog").close();
+    await loadAlarmData();
+    await refreshAlarmPopupState();
+  } catch {
+    statusNode.className = "history-page-status error";
+    statusNode.textContent = "提交失败，请确认告警状态是否允许当前操作。";
+    submitButton.disabled = false;
+  }
+}
+
+function levelBadge(level) {
+  const key = String(level || "info").toLowerCase();
+  return `<span class="level-badge level-${escapeHtml(key)}">${escapeHtml(ALARM_LEVEL_LABELS[key] ?? key)}</span>`;
+}
+
+function statusBadge(status) {
+  const key = String(status || "active").toLowerCase();
+  return `<span class="status-badge status-${escapeHtml(key)}">${escapeHtml(ALARM_STATUS_LABELS[key] ?? key)}</span>`;
+}
+
+function alarmDeviceText(alarm) {
+  return [alarm.cabinet_id, alarm.circuit_id, alarm.meter_id].filter(Boolean).join(" / ") || "--";
+}
+
+function alarmCircuitText(alarm) {
+  const topologyCircuit = findAlarmTopologyCircuit(alarm);
+  if (topologyCircuit) {
+    return `${topologyCircuit.internalId} / ${displayCircuitName(topologyCircuit)}`;
+  }
+
+  const circuitId = alarm.display_circuit_id ?? alarm.circuit_id;
+  const circuitName = alarm.display_circuit_name ?? alarm.circuit_name;
+  if (circuitId || circuitName) {
+    return `${circuitId || "--"} / ${circuitName || "--"}`;
+  }
+
+  const circuit = circuits.find((item) => item.meter && item.meter === alarm.meter_id);
+  if (circuit) {
+    return `${circuit.internalId} / ${displayCircuitName(circuit)}`;
+  }
+
+  return alarm.meter_id ?? "--";
+}
+
+function alarmBasisText(alarm) {
+  return alarm.basis || alarm.description || "未记录告警依据";
+}
+
+function findAlarmTopologyCircuit(alarm) {
+  const directCircuitId = alarm.circuit_id ?? alarm.display_circuit_id;
+  if (directCircuitId) {
+    const direct = circuits.find((circuit) => circuit.internalId === directCircuitId || circuit.dbCircuitId === directCircuitId);
+    if (direct) return direct;
+  }
+  if (!alarm.meter_id) return null;
+  return circuits.find((circuit) => circuit.meter === alarm.meter_id) ?? null;
+}
+
+function formatNullableTime(value) {
+  if (!value) return "--";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : formatBeijingDateTime(date);
+}
+
+function formatValueWithUnit(value, unit) {
+  if (value === null || value === undefined || value === "") return "--";
+  const number = Number(value);
+  const text = Number.isFinite(number) ? number.toFixed(Math.abs(number) >= 100 ? 1 : 2) : String(value);
+  return `${text}${unit ? ` ${unit}` : ""}`;
+}
+
+function limitText(minValue, maxValue, unit) {
+  const hasMin = minValue !== null && minValue !== undefined;
+  const hasMax = maxValue !== null && maxValue !== undefined;
+  if (hasMin && hasMax) return `${formatValueWithUnit(minValue, unit)} ~ ${formatValueWithUnit(maxValue, unit)}`;
+  if (hasMin) return `≥ ${formatValueWithUnit(minValue, unit)}`;
+  if (hasMax) return `≤ ${formatValueWithUnit(maxValue, unit)}`;
+  return "--";
+}
+
 function historyTableMarkup() {
   if (historyPageState.status === "idle") {
     return `<div class="history-empty-state">选择回路、时间范围和每页条数后点击查询。</div>`;
@@ -907,6 +1461,66 @@ async function refreshRealtimeState() {
   }
 }
 
+async function refreshAlarmPopupState() {
+  if (!TOPOLOGY_API_BASE_URL) return;
+  try {
+    const params = new URLSearchParams({ status: "active", page: "1", pageSize: "20" });
+    const response = await fetch(topologyApiUrl(`/api/alarms?${params.toString()}`), { cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) return;
+    const alarms = payload.alarms ?? [];
+    updateActiveAlarmCircuitMarkers(alarms);
+    refreshHotspotLabels();
+    if (!alarmPopupPrimed) {
+      alarms.forEach((alarm) => seenActiveAlarmIds.add(String(alarm.id)));
+      alarmPopupPrimed = true;
+      return;
+    }
+    const newAlarms = alarms.filter((alarm) => {
+      const id = String(alarm.id);
+      if (seenActiveAlarmIds.has(id)) return false;
+      seenActiveAlarmIds.add(id);
+      return !dismissedAlarmToastIds.has(id);
+    });
+    if (newAlarms.length > 0) renderAlarmToasts(newAlarms);
+  } catch {
+    activeAlarmCircuitIds.clear();
+    refreshHotspotLabels();
+  }
+}
+
+function updateActiveAlarmCircuitMarkers(alarms) {
+  activeAlarmCircuitIds.clear();
+  alarms.forEach((alarm) => {
+    if (alarm.circuit_id) activeAlarmCircuitIds.add(String(alarm.circuit_id));
+    circuits
+      .filter((circuit) => alarm.circuit_id === circuit.dbCircuitId || (!alarm.circuit_id && alarm.meter_id && circuit.meter === alarm.meter_id))
+      .forEach((circuit) => activeAlarmCircuitIds.add(circuit.internalId));
+  });
+}
+
+function renderAlarmToasts(alarms) {
+  const host = document.querySelector("#alarmToastHost");
+  if (!host) return;
+  if (!alarms || alarms.length === 0) {
+    host.innerHTML = "";
+    return;
+  }
+  host.innerHTML = alarms.slice(0, 3).map((alarm) => `<article class="alarm-toast">
+    <div class="alarm-toast-header">
+      ${levelBadge(alarm.level)}
+      <button class="icon-button" type="button" title="不再提示此条" aria-label="不再提示此条" data-dismiss-alarm-toast="${escapeHtml(alarm.id)}">×</button>
+    </div>
+    <strong>${escapeHtml(alarm.title ?? "新告警")}</strong>
+    <p>${escapeHtml(alarmCircuitText(alarm))}</p>
+    <p>${escapeHtml(formatValueWithUnit(alarm.trigger_value, alarm.trigger_unit))} · ${escapeHtml(formatNullableTime(alarm.started_at))}</p>
+    <div class="alarm-toast-actions">
+      <button class="row-action-button" type="button" data-view-alarm-page>查看告警事件页</button>
+      <button class="row-action-button" type="button" data-dismiss-alarm-toast="${escapeHtml(alarm.id)}">不再提示此条</button>
+    </div>
+  </article>`).join("");
+}
+
 function applyTopologyState(payload) {
   const byMeter = new Map();
   const byCircuit = new Map();
@@ -936,6 +1550,7 @@ function refreshHotspotLabels() {
     const title = `${circuit.internalId} ${circuit.cabinetCode} ${displayCircuitName(circuit)} ${displaySwitchState(circuit)}`;
     hotspot.setAttribute("title", title);
     hotspot.setAttribute("aria-label", title);
+    hotspot.classList.toggle("alarm", activeAlarmCircuitIds.has(circuit.internalId) || activeAlarmCircuitIds.has(circuit.dbCircuitId));
   });
 }
 
