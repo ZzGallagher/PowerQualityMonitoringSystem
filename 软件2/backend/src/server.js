@@ -20,19 +20,40 @@ app.get(["/api/health", "/api/ingest/health"], async (_req, res) => {
 app.get("/api/topology", async (_req, res) => {
   const result = await query(
     `
-    SELECT DISTINCT ON (rv.meter_id)
-      rv.meter_id,
-      pm.circuit_id,
-      pm.cabinet_id,
-      rv.point_code,
-      rv.value,
-      rv.raw_value,
-      rv.quality,
-      rv.sample_time
-    FROM realtime_value rv
-    JOIN point_mapping pm ON pm.id = rv.mapping_id
-    WHERE rv.point_code IN ('switch_status', 'dido_status')
-    ORDER BY rv.meter_id, rv.sample_time DESC, rv.received_at DESC
+    WITH latest_switch_value AS (
+      SELECT DISTINCT ON (rv.meter_id, rv.point_code)
+        rv.meter_id,
+        rv.point_code,
+        rv.value,
+        rv.raw_value,
+        rv.quality,
+        rv.sample_time,
+        rv.received_at,
+        pm.circuit_id AS mapped_circuit_id,
+        pm.cabinet_id AS mapped_cabinet_id
+      FROM realtime_value rv
+      JOIN point_mapping pm ON pm.id = rv.mapping_id
+      WHERE rv.point_code IN ('switch_status', 'dido_status')
+      ORDER BY rv.meter_id, rv.point_code, rv.sample_time DESC, rv.received_at DESC
+    )
+    SELECT
+      lsv.meter_id,
+      COALESCE(csm.circuit_id, lsv.mapped_circuit_id) AS circuit_id,
+      COALESCE(csm.cabinet_id, lsv.mapped_cabinet_id) AS cabinet_id,
+      lsv.point_code,
+      lsv.value,
+      lsv.raw_value,
+      lsv.quality,
+      lsv.sample_time,
+      csm.bit_mask,
+      csm.display_name
+    FROM latest_switch_value lsv
+    LEFT JOIN circuit_switch_mapping csm
+      ON csm.meter_id = lsv.meter_id
+      AND csm.point_code = lsv.point_code
+      AND csm.enabled = true
+    WHERE csm.id IS NOT NULL OR lsv.mapped_circuit_id IS NOT NULL
+    ORDER BY lsv.meter_id, lsv.point_code, csm.bit_mask NULLS LAST
     `,
   );
   res.json({
@@ -41,6 +62,10 @@ app.get("/api/topology", async (_req, res) => {
       meterId: row.meter_id,
       circuitId: row.circuit_id,
       cabinetId: row.cabinet_id,
+      pointCode: row.point_code,
+      rawValue: row.raw_value,
+      bitMask: row.bit_mask,
+      displayName: row.display_name,
       switchStatus: switchStatusFromRow(row),
       quality: row.quality,
       sampleTime: row.sample_time,
@@ -644,7 +669,18 @@ app.get("/api/interfaces/status", async (_req, res) => {
 });
 
 function switchStatusFromRow(row) {
-  if (row.value === null || row.value === undefined) return null;
+  if (
+    (row.value === null || row.value === undefined)
+    && (row.raw_value === null || row.raw_value === undefined)
+  ) {
+    return null;
+  }
+  if (row.bit_mask !== null && row.bit_mask !== undefined) {
+    const raw = row.raw_value === null || row.raw_value === undefined ? Number(row.value) : Number(row.raw_value);
+    const bitMask = Number(row.bit_mask);
+    if (!Number.isFinite(raw) || !Number.isFinite(bitMask)) return null;
+    return raw & bitMask ? 1 : 0;
+  }
   if (row.point_code === "switch_status") return Number(row.value);
   const raw = row.raw_value === null || row.raw_value === undefined ? Number(row.value) : Number(row.raw_value);
   if (!Number.isFinite(raw)) return null;

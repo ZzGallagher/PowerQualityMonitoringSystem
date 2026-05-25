@@ -14,6 +14,7 @@ async function initializeDatabase() {
   await seedTopology();
   await seedPointDictionary();
   await seedPointMappings();
+  await seedSwitchMappings();
 }
 
 async function seedFromSoftware1Config() {
@@ -120,6 +121,24 @@ async function seedTopology() {
     `,
     [stationId],
   );
+
+  const aa1Circuits = [
+    ["d010101", "AA1-01", "路灯照明"],
+    ["d010102", "AA1-02", "3号楼照明"],
+    ["d010103", "AA1-03", "4、5号楼照明"],
+    ["d010104", "AA1-04", "1号楼照明"],
+  ];
+  for (const [id, code, name] of aa1Circuits) {
+    await pool.query(
+      `
+      INSERT INTO circuit (id, station_id, cabinet_id, code, name, circuit_type, status, rated_voltage)
+      VALUES ($1, $2, 'lv-aa1', $3, $4, 'load', 'not_connected', 380.0)
+      ON CONFLICT (id) DO UPDATE SET cabinet_id = EXCLUDED.cabinet_id, code = EXCLUDED.code, name = EXCLUDED.name
+      `,
+      [id, stationId, code, name],
+    );
+  }
+
   await pool.query(
     `
     UPDATE device
@@ -177,6 +196,40 @@ async function seedPointDictionary() {
       ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, unit = EXCLUDED.unit
       `,
       [raw.code, raw.name, raw.unit, raw.source, raw.category],
+    );
+  }
+}
+
+async function seedSwitchMappings() {
+  const stationId = await firstValue("SELECT id FROM station ORDER BY id LIMIT 1", "substation-001");
+  const meterId = await firstValue("SELECT id FROM meter ORDER BY id LIMIT 1", "amc-001");
+  await pool.query(
+    `
+    INSERT INTO point_dictionary (code, name, unit, value_type, source, category, enabled)
+    VALUES ('dido_status', '开关量状态', '', 'digital', 'amc-e4kc-secondary', 'digital', true)
+    ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, value_type = EXCLUDED.value_type, category = EXCLUDED.category
+    `,
+  );
+
+  const mappings = [
+    ["aa1-c1-dido", "d010101", 0x0100, "路灯照明"],
+    ["aa1-c2-dido", "d010102", 0x0200, "3号楼照明"],
+    ["aa1-c3-dido", "d010103", 0x0400, "4、5号楼照明"],
+    ["aa1-c4-dido", "d010104", 0x0800, "1号楼照明"],
+  ];
+  for (const [id, circuitId, bitMask, displayName] of mappings) {
+    await pool.query(
+      `
+      INSERT INTO circuit_switch_mapping (
+        id, station_id, circuit_id, cabinet_id, meter_id, point_code, bit_mask, closed_value, display_name, enabled
+      )
+      VALUES ($1, $2, $3, 'lv-aa1', $4, 'dido_status', $5, 1, $6, true)
+      ON CONFLICT (circuit_id, meter_id, point_code, bit_mask) DO UPDATE SET
+        cabinet_id = EXCLUDED.cabinet_id,
+        display_name = EXCLUDED.display_name,
+        enabled = EXCLUDED.enabled
+      `,
+      [id, stationId, circuitId, meterId, bitMask, displayName],
     );
   }
 }

@@ -108,6 +108,20 @@ CREATE TABLE IF NOT EXISTS point_mapping (
     UNIQUE (meter_id, point_code)
 );
 
+CREATE TABLE IF NOT EXISTS circuit_switch_mapping (
+    id TEXT PRIMARY KEY,
+    station_id TEXT NOT NULL REFERENCES station(id),
+    circuit_id TEXT NOT NULL REFERENCES circuit(id),
+    cabinet_id TEXT REFERENCES cabinet(id),
+    meter_id TEXT NOT NULL REFERENCES meter(id),
+    point_code TEXT NOT NULL REFERENCES point_dictionary(code),
+    bit_mask INTEGER,
+    closed_value DOUBLE PRECISION DEFAULT 1,
+    display_name TEXT,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    UNIQUE (circuit_id, meter_id, point_code, bit_mask)
+);
+
 CREATE TABLE IF NOT EXISTS ingest_packet (
     id BIGSERIAL PRIMARY KEY,
     protocol_version TEXT NOT NULL,

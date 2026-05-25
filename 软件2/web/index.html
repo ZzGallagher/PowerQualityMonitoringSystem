@@ -258,6 +258,38 @@
           </div>
         </section>
 
+        <section id="substation3dPage" class="page">
+          <div class="substation-3d-layout">
+            <section class="substation-3d-panel" aria-label="AA1三维配电柜">
+              <div class="panel-toolbar substation-3d-toolbar">
+                <div>
+                  <strong>AA1负荷开关柜三维可视化</strong>
+                  <span>指示灯和开关把手随回路通断状态刷新</span>
+                </div>
+                <div class="toolbar-actions">
+                  <button class="tool-button fit-button" type="button" title="正视图" data-substation-view="front">正视</button>
+                  <button class="tool-button fit-button" type="button" title="侧视图" data-substation-view="side">侧视</button>
+                  <button class="tool-button fit-button" type="button" title="俯视图" data-substation-view="top">俯视</button>
+                  <button class="tool-button fit-button" type="button" title="45度视角" data-substation-view="iso">45°</button>
+                  <button id="substation3dFitButton" class="tool-button fit-button" type="button" title="适配模型">适配</button>
+                  <button id="substation3dResetButton" class="tool-button fit-button" type="button" title="复位视角">复位</button>
+                </div>
+              </div>
+              <div id="substation3dViewport" class="substation-3d-viewport">
+                <div id="substation3dStatus" class="substation-3d-status">正在初始化三维视图...</div>
+              </div>
+            </section>
+            <aside class="substation-3d-side" aria-label="AA1回路状态">
+              <div class="substation-3d-legend">
+                <span><i class="state-dot closed"></i>通路</span>
+                <span><i class="state-dot open"></i>断路</span>
+                <span><i class="state-dot unknown"></i>未知</span>
+              </div>
+              <div id="substation3dCircuitList" class="substation-3d-circuit-list"></div>
+            </aside>
+          </div>
+        </section>
+
         <section id="placeholderPage" class="page">
           <div class="placeholder-card">
             <h2 id="placeholderTitle"></h2>
@@ -299,7 +331,14 @@
 
     <div id="alarmToastHost" class="alarm-toast-host" aria-live="polite" aria-label="实时告警提示"></div>
 
-    <script src="./topology-config.js?v=20260524-local-api"></script>
-    <script src="./app.js?v=20260524-alarm-events-10"></script>
+    <script src="./topology-config.js?v=20260525-substation-3d-3"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./assets/three/three.module.js"
+        }
+      }
+    </script>
+    <script src="./app.js?v=20260525-substation-3d-8"></script>
   </body>
 </html>

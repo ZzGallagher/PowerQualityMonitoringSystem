@@ -1,5 +1,6 @@
 const NAV_ITEMS = [
   ["overview", "低压组态监测", "P0"],
+  ["substation3d", "变电站可视化", "P0"],
   ["history", "历史数据", "P0"],
   ["alarms", "告警事件", "P0"],
   ["interfaces", "接口管理", "P0"],
@@ -15,6 +16,66 @@ const STATION_CODE = TOPOLOGY_CONFIG.stationCode;
 const TOPOLOGY_API_BASE_URL = normalizeApiBaseUrl(TOPOLOGY_CONFIG.apiBaseUrl);
 const COLLECTOR_ONLINE_MAX_AGE_MS = 60 * 1000;
 const ALARM_POLL_INTERVAL_MS = 5000;
+const SUBSTATION_3D_HOVER_DELAY_MS = 2000;
+const DEFAULT_VISUALIZATION_3D_CONFIG = {
+  modelAsset: "./assets/models/AA1.glb?v=20260525-centered-1",
+  cabinetCode: "AA1",
+  ignoredObjects: ["Rectangle204"],
+  camera: {
+    position: [3.2, 2.4, 5.2],
+    target: [0, 1.2, 0],
+  },
+  circuits: [
+    {
+      circuitId: "d010101",
+      name: "路灯照明",
+      meterId: "amc-001",
+      pointCode: "dido_status",
+      bitMask: 0x0100,
+      lampObject: "AA1_C1_LAMP",
+      handleObject: "AA1_C1_HANDLE",
+      pickObjects: ["ct1", "AA1_C1_DRAWER"],
+      openRotation: { x: -28 },
+      closedRotation: { x: 28 },
+    },
+    {
+      circuitId: "d010102",
+      name: "3号楼照明",
+      meterId: "amc-001",
+      pointCode: "dido_status",
+      bitMask: 0x0200,
+      lampObject: "AA1_C2_LAMP",
+      handleObject: "AA1_C2_HANDLE",
+      pickObjects: ["ct2", "AA1_C2_DRAWER"],
+      openRotation: { x: -28 },
+      closedRotation: { x: 28 },
+    },
+    {
+      circuitId: "d010103",
+      name: "4、5号楼照明",
+      meterId: "amc-001",
+      pointCode: "dido_status",
+      bitMask: 0x0400,
+      lampObject: "AA1_C3_LAMP",
+      handleObject: "AA1_C3_HANDLE",
+      pickObjects: ["ct3", "AA1_C3_DRAWER"],
+      openRotation: { x: -28 },
+      closedRotation: { x: 28 },
+    },
+    {
+      circuitId: "d010104",
+      name: "1号楼照明",
+      meterId: "amc-001",
+      pointCode: "dido_status",
+      bitMask: 0x0800,
+      lampObject: "AA1_C4_LAMP",
+      handleObject: "AA1_C4_HANDLE",
+      pickObjects: ["gdb", "AA1_C4_DRAWER"],
+      openRotation: { x: -28 },
+      closedRotation: { x: 28 },
+    },
+  ],
+};
 
 const PLACEHOLDER_COPY = {
   history: "后续承接回路、电参量、时间范围和统计值查询。低压组态监测页弹窗中的回路编号会作为默认查询条件。",
@@ -33,6 +94,13 @@ let activePage = "overview";
 let realtimeSeed = 0;
 let topologyZoom = 1.5;
 const realtimeByMeter = new Map();
+let latestTopologyPayload = { switches: [] };
+let substation3dController = null;
+let substation3dLoadingPromise = null;
+let hoveredSubstation3dCircuitId = null;
+let pendingSubstation3dHoverCircuitId = null;
+let substation3dHoverTimer = null;
+let lastSubstation3dPointer = null;
 let activeDialogTab = "realtime";
 let historyRequestId = 0;
 let historyPageRequestId = 0;
@@ -107,6 +175,7 @@ const ALARM_LEVEL_LABELS = {
   warning: "告警",
   info: "提示",
 };
+const EVENT_PLACEHOLDER_MESSAGE = "暂无事件记录。ION7650综合电表电压事件接入后在此显示。";
 const alarmEventState = {
   initialized: false,
   activeTab: "alarms",
@@ -127,7 +196,7 @@ const alarmEventState = {
     pageSize: 20,
     total: 0,
     hasNext: false,
-    status: "idle",
+    status: "success",
     message: "",
     rows: [],
   },
@@ -278,22 +347,31 @@ function setActivePage(page) {
   });
 
   const isOverview = page === "overview";
+  const isSubstation3d = page === "substation3d";
   const isHistory = page === "history";
   const isAlarmEvent = page === "alarms";
   document.querySelector("#overviewPage").classList.toggle("page-active", isOverview);
+  document.querySelector("#substation3dPage").classList.toggle("page-active", isSubstation3d);
   document.querySelector("#historyPage").classList.toggle("page-active", isHistory);
   document.querySelector("#alarmEventPage").classList.toggle("page-active", isAlarmEvent);
-  document.querySelector("#placeholderPage").classList.toggle("page-active", !isOverview && !isHistory && !isAlarmEvent);
+  document.querySelector("#placeholderPage").classList.toggle("page-active", !isOverview && !isSubstation3d && !isHistory && !isAlarmEvent);
   const label = NAV_ITEMS.find(([key]) => key === page)?.[1] ?? "低压组态监测";
   document.querySelector("#pageTitle").textContent = label;
 
-  if (isHistory) {
+  if (isSubstation3d) {
+    activateSubstation3dPage();
+  } else if (isHistory) {
+    hideSubstation3dHoverPopup();
     activateHistoryPage();
   } else if (isAlarmEvent) {
+    hideSubstation3dHoverPopup();
     activateAlarmEventPage();
   } else if (!isOverview) {
+    hideSubstation3dHoverPopup();
     document.querySelector("#placeholderTitle").textContent = label;
     document.querySelector("#placeholderBody").textContent = PLACEHOLDER_COPY[page] ?? "";
+  } else {
+    hideSubstation3dHoverPopup();
   }
 }
 
@@ -684,7 +762,7 @@ function initAlarmEventPage() {
   });
   document.querySelector("#eventQueryButton").addEventListener("click", () => {
     alarmEventState.events.page = 1;
-    loadEventData();
+    resetEventPlaceholder();
   });
   document.querySelector("#alarmPageSizeSelect").addEventListener("change", (event) => {
     alarmEventState.alarms.pageSize = Number(event.target.value) || 20;
@@ -694,7 +772,7 @@ function initAlarmEventPage() {
   document.querySelector("#eventPageSizeSelect").addEventListener("change", (event) => {
     alarmEventState.events.pageSize = Number(event.target.value) || 20;
     alarmEventState.events.page = 1;
-    if (alarmEventState.events.status === "success") loadEventData();
+    resetEventPlaceholder();
   });
   document.querySelector("#alarmPrevPageButton").addEventListener("click", () => {
     if (alarmEventState.alarms.page <= 1 || alarmEventState.alarms.status === "loading") return;
@@ -707,14 +785,10 @@ function initAlarmEventPage() {
     loadAlarmData();
   });
   document.querySelector("#eventPrevPageButton").addEventListener("click", () => {
-    if (alarmEventState.events.page <= 1 || alarmEventState.events.status === "loading") return;
-    alarmEventState.events.page -= 1;
-    loadEventData();
+    resetEventPlaceholder();
   });
   document.querySelector("#eventNextPageButton").addEventListener("click", () => {
-    if (!alarmEventState.events.hasNext || alarmEventState.events.status === "loading") return;
-    alarmEventState.events.page += 1;
-    loadEventData();
+    resetEventPlaceholder();
   });
   document.querySelector("#alarmTableHost").addEventListener("click", (event) => {
     const button = event.target.closest("[data-alarm-action]");
@@ -749,14 +823,12 @@ function initAlarmEventPage() {
 function activateAlarmEventPage() {
   if (!alarmEventState.initialized) initAlarmEventPage();
   if (alarmEventState.activeTab === "alarms" && alarmEventState.alarms.status === "idle") loadAlarmData();
-  if (alarmEventState.activeTab === "events" && alarmEventState.events.status === "idle") loadEventData();
 }
 
 function switchAlarmEventTab(tab) {
   alarmEventState.activeTab = tab === "events" ? "events" : "alarms";
   renderAlarmEventState();
   if (alarmEventState.activeTab === "alarms" && alarmEventState.alarms.status === "idle") loadAlarmData();
-  if (alarmEventState.activeTab === "events" && alarmEventState.events.status === "idle") loadEventData();
 }
 
 async function loadAlarmData() {
@@ -809,34 +881,16 @@ async function loadAlarmSummary() {
 }
 
 async function loadEventData() {
-  if (!TOPOLOGY_API_BASE_URL) {
-    alarmEventState.events.status = "error";
-    alarmEventState.events.message = "未配置后台接口地址。";
-    renderAlarmEventState();
-    return;
-  }
+  resetEventPlaceholder();
+}
 
-  alarmEventState.events.status = "loading";
+function resetEventPlaceholder() {
+  alarmEventState.events.status = "success";
   alarmEventState.events.message = "";
-  renderAlarmEventState();
-
-  try {
-    const params = eventQueryParams();
-    const response = await fetch(topologyApiUrl(`/api/events?${params.toString()}`), { cache: "no-store" });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || !payload.ok) throw new Error(payload.error || "event query failed");
-    alarmEventState.events.status = "success";
-    alarmEventState.events.rows = payload.events ?? [];
-    alarmEventState.events.total = Number(payload.total ?? 0);
-    alarmEventState.events.hasNext = Boolean(payload.hasNext);
-  } catch {
-    alarmEventState.events.status = "error";
-    alarmEventState.events.message = "事件查询失败，请检查后台服务和数据库连接。";
-    alarmEventState.events.rows = [];
-    alarmEventState.events.total = 0;
-    alarmEventState.events.hasNext = false;
-  }
-
+  alarmEventState.events.rows = [];
+  alarmEventState.events.total = 0;
+  alarmEventState.events.hasNext = false;
+  alarmEventState.events.page = 1;
   renderAlarmEventState();
 }
 
@@ -909,17 +963,14 @@ function renderAlarmTableState() {
 
 function renderEventTableState() {
   const state = alarmEventState.events;
-  const totalPage = state.total > 0 ? Math.ceil(state.total / state.pageSize) : 1;
-  const startIndex = state.total === 0 ? 0 : (state.page - 1) * state.pageSize + 1;
-  const endIndex = Math.min(state.total, state.page * state.pageSize);
-  document.querySelector("#eventResultMeta").textContent = state.total > 0 ? `共 ${state.total} 条，当前 ${startIndex}-${endIndex} 条` : "按事件时间倒序";
-  document.querySelector("#eventPageInfo").textContent = `第 ${state.page} / ${totalPage} 页`;
-  document.querySelector("#eventPrevPageButton").disabled = state.status === "loading" || state.page <= 1;
-  document.querySelector("#eventNextPageButton").disabled = state.status === "loading" || !state.hasNext;
-  document.querySelector("#eventQueryButton").disabled = state.status === "loading";
+  document.querySelector("#eventResultMeta").textContent = "ION7650电压事件待接入";
+  document.querySelector("#eventPageInfo").textContent = "第 1 / 1 页";
+  document.querySelector("#eventPrevPageButton").disabled = true;
+  document.querySelector("#eventNextPageButton").disabled = true;
+  document.querySelector("#eventQueryButton").disabled = true;
   const statusNode = document.querySelector("#eventPageStatus");
   statusNode.className = `history-page-status ${state.status === "error" ? "error" : ""}`;
-  statusNode.textContent = state.status === "loading" ? "正在查询事件..." : state.status === "error" ? state.message : "";
+  statusNode.textContent = "";
   document.querySelector("#eventTableHost").innerHTML = eventTableMarkup();
 }
 
@@ -965,34 +1016,7 @@ function alarmTableMarkup() {
 }
 
 function eventTableMarkup() {
-  const state = alarmEventState.events;
-  if (state.status === "idle") return `<div class="history-empty-state">设置筛选条件后点击查询。</div>`;
-  if (state.status === "loading") return `<div class="history-empty-state">事件加载中...</div>`;
-  if (state.status === "error") return "";
-  if (state.rows.length === 0) return `<div class="empty-state">当前条件下暂无事件。</div>`;
-
-  return `<table class="history-data-table">
-    <thead>
-      <tr>
-        <th>事件时间</th>
-        <th>类型</th>
-        <th>等级</th>
-        <th>仪表</th>
-        <th>标题</th>
-        <th>描述</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${state.rows.map((event) => `<tr>
-        <td class="history-time-cell">${escapeHtml(formatNullableTime(event.event_time))}</td>
-        <td>${escapeHtml(event.event_type ?? "--")}</td>
-        <td>${levelBadge(event.level)}</td>
-        <td>${escapeHtml(event.meter_id ?? "--")}</td>
-        <td>${escapeHtml(event.title ?? "--")}</td>
-        <td>${escapeHtml(event.description ?? "--")}</td>
-      </tr>`).join("")}
-    </tbody>
-  </table>`;
+  return `<div class="empty-state">${EVENT_PLACEHOLDER_MESSAGE}</div>`;
 }
 
 function alarmActionButtons(alarm) {
@@ -1454,10 +1478,12 @@ async function refreshRealtimeState() {
     if (dialog.open && selectedCircuitId && activeDialogTab === "realtime") {
       refreshOpenRealtimeDialog(findCircuit(selectedCircuitId));
     }
+    refreshSubstation3dHoverPopup();
   } catch {
     realtimeByMeter.clear();
     refreshCurrentOverlays();
     refreshCommunicationLabels();
+    refreshSubstation3dHoverPopup();
   }
 }
 
@@ -1492,9 +1518,10 @@ async function refreshAlarmPopupState() {
 function updateActiveAlarmCircuitMarkers(alarms) {
   activeAlarmCircuitIds.clear();
   alarms.forEach((alarm) => {
-    if (alarm.circuit_id) activeAlarmCircuitIds.add(String(alarm.circuit_id));
+    const circuitId = alarm.circuit_id ?? alarm.display_circuit_id;
+    if (!circuitId) return;
     circuits
-      .filter((circuit) => alarm.circuit_id === circuit.dbCircuitId || (!alarm.circuit_id && alarm.meter_id && circuit.meter === alarm.meter_id))
+      .filter((circuit) => circuitId === circuit.dbCircuitId || circuitId === circuit.internalId)
       .forEach((circuit) => activeAlarmCircuitIds.add(circuit.internalId));
   });
 }
@@ -1522,6 +1549,7 @@ function renderAlarmToasts(alarms) {
 }
 
 function applyTopologyState(payload) {
+  latestTopologyPayload = payload ?? { switches: [] };
   const byMeter = new Map();
   const byCircuit = new Map();
   (payload.switches ?? []).forEach((item) => {
@@ -1541,6 +1569,59 @@ function applyTopologyState(payload) {
   const svg = document.querySelector("#topologySvgHost svg");
   if (svg) renderBreakerStates(svg);
   refreshHotspotLabels();
+  applySubstation3dState();
+  refreshSubstation3dHoverPopup();
+}
+
+async function activateSubstation3dPage() {
+  if (substation3dController) {
+    substation3dController.resize();
+    applySubstation3dState();
+    return;
+  }
+  if (substation3dLoadingPromise) return;
+
+  const config = TOPOLOGY_CONFIG.visualization3d ?? DEFAULT_VISUALIZATION_3D_CONFIG;
+  if (!config) {
+    setSubstation3dStatus("未配置三维可视化参数。", true);
+    return;
+  }
+
+  substation3dLoadingPromise = import("./substation-3d.js")
+    .then((module) => {
+      substation3dController = module.initSubstation3dPage({
+        config,
+        viewport: document.querySelector("#substation3dViewport"),
+        statusNode: document.querySelector("#substation3dStatus"),
+        circuitListNode: document.querySelector("#substation3dCircuitList"),
+        resetButton: document.querySelector("#substation3dResetButton"),
+        fitButton: document.querySelector("#substation3dFitButton"),
+        viewButtons: document.querySelectorAll("[data-substation-view]"),
+        onCircuitSelect: selectCircuit,
+        onCircuitOpen: openCircuitDialog,
+        onCircuitHover: scheduleSubstation3dHoverPopup,
+        onCircuitLeave: hideSubstation3dHoverPopup,
+      });
+      applySubstation3dState();
+    })
+    .catch(() => {
+      setSubstation3dStatus("三维模块加载失败，请检查本地 Three.js 资源。", true);
+    })
+    .finally(() => {
+      substation3dLoadingPromise = null;
+    });
+}
+
+function applySubstation3dState() {
+  if (!substation3dController) return;
+  substation3dController.applyTopologyState(latestTopologyPayload);
+}
+
+function setSubstation3dStatus(text, isError = false) {
+  const status = document.querySelector("#substation3dStatus");
+  if (!status) return;
+  status.textContent = text;
+  status.classList.toggle("error", isError);
 }
 
 function refreshHotspotLabels() {
@@ -1550,7 +1631,7 @@ function refreshHotspotLabels() {
     const title = `${circuit.internalId} ${circuit.cabinetCode} ${displayCircuitName(circuit)} ${displaySwitchState(circuit)}`;
     hotspot.setAttribute("title", title);
     hotspot.setAttribute("aria-label", title);
-    hotspot.classList.toggle("alarm", activeAlarmCircuitIds.has(circuit.internalId) || activeAlarmCircuitIds.has(circuit.dbCircuitId));
+    hotspot.classList.remove("alarm");
   });
 }
 
@@ -1626,6 +1707,7 @@ function tickRealtime() {
   }
   refreshCurrentOverlays();
   refreshCommunicationLabels();
+  refreshSubstation3dHoverPopup();
 }
 
 function findCircuit(circuitId) {
@@ -1635,10 +1717,113 @@ function findCircuit(circuitId) {
 function openCircuitDialog(circuitId) {
   const circuit = findCircuit(circuitId);
   if (!circuit) return;
+  hideSubstation3dHoverPopup();
   activeDialogTab = "realtime";
   selectCircuit(circuitId);
   renderDialogContent(circuit);
-  document.querySelector("#circuitDialog").showModal();
+  const dialog = document.querySelector("#circuitDialog");
+  if (!dialog.open) dialog.showModal();
+}
+
+function scheduleSubstation3dHoverPopup(circuitId, pointer) {
+  const circuit = findCircuit(circuitId);
+  if (!circuit) return;
+  const dialog = document.querySelector("#circuitDialog");
+  if (dialog?.open) {
+    hideSubstation3dHoverPopup();
+    return;
+  }
+  lastSubstation3dPointer = pointer ?? lastSubstation3dPointer;
+  if (hoveredSubstation3dCircuitId === circuitId) {
+    renderSubstation3dHoverPopup(circuitId, lastSubstation3dPointer);
+    return;
+  }
+  if (pendingSubstation3dHoverCircuitId === circuitId) return;
+
+  clearSubstation3dHoverTimer();
+  pendingSubstation3dHoverCircuitId = circuitId;
+  const popup = document.querySelector("#substation3dHoverPopup");
+  if (popup) popup.hidden = true;
+  substation3dHoverTimer = setTimeout(() => {
+    substation3dHoverTimer = null;
+    if (pendingSubstation3dHoverCircuitId !== circuitId || activePage !== "substation3d") return;
+    renderSubstation3dHoverPopup(circuitId, lastSubstation3dPointer);
+  }, SUBSTATION_3D_HOVER_DELAY_MS);
+}
+
+function renderSubstation3dHoverPopup(circuitId, pointer) {
+  const circuit = findCircuit(circuitId);
+  if (!circuit) return;
+  hoveredSubstation3dCircuitId = circuitId;
+  pendingSubstation3dHoverCircuitId = null;
+  const popup = ensureSubstation3dHoverPopup();
+  const voltageText = buildPhaseVoltages(circuit).join(" / ");
+  const currentText = buildPhaseCurrents(circuit).join(" / ");
+  popup.innerHTML = `
+    <div class="dialog-header">
+      <h2>${circuit.cabinetCode} ${displayCircuitName(circuit)}</h2>
+      <p>${circuit.internalId}</p>
+    </div>
+    <div class="dialog-body">
+      <div class="substation-3d-hover-summary">
+        ${substation3dHoverRow("电压", voltageText)}
+        ${substation3dHoverRow("电流", currentText)}
+        ${substation3dHoverRow("开关状态", displaySwitchState(circuit))}
+      </div>
+    </div>`;
+  popup.hidden = false;
+  positionSubstation3dHoverPopup(popup, pointer);
+}
+
+function refreshSubstation3dHoverPopup() {
+  if (!hoveredSubstation3dCircuitId || activePage !== "substation3d") return;
+  renderSubstation3dHoverPopup(hoveredSubstation3dCircuitId, lastSubstation3dPointer);
+}
+
+function hideSubstation3dHoverPopup() {
+  clearSubstation3dHoverTimer();
+  hoveredSubstation3dCircuitId = null;
+  pendingSubstation3dHoverCircuitId = null;
+  lastSubstation3dPointer = null;
+  const popup = document.querySelector("#substation3dHoverPopup");
+  if (popup) popup.hidden = true;
+}
+
+function clearSubstation3dHoverTimer() {
+  if (!substation3dHoverTimer) return;
+  clearTimeout(substation3dHoverTimer);
+  substation3dHoverTimer = null;
+}
+
+function substation3dHoverRow(label, value) {
+  return `<div class="substation-3d-hover-row">
+    <span>${escapeHtml(label)}</span>
+    <strong>${escapeHtml(value)}</strong>
+  </div>`;
+}
+
+function ensureSubstation3dHoverPopup() {
+  let popup = document.querySelector("#substation3dHoverPopup");
+  if (popup) return popup;
+  popup = document.createElement("div");
+  popup.id = "substation3dHoverPopup";
+  popup.className = "substation-3d-hover-popup";
+  popup.hidden = true;
+  document.body.appendChild(popup);
+  return popup;
+}
+
+function positionSubstation3dHoverPopup(popup, pointer) {
+  const x = pointer?.clientX ?? window.innerWidth / 2;
+  const y = pointer?.clientY ?? window.innerHeight / 2;
+  const margin = 14;
+  popup.style.left = `${x + margin}px`;
+  popup.style.top = `${y + margin}px`;
+  const rect = popup.getBoundingClientRect();
+  const left = rect.right > window.innerWidth - margin ? x - rect.width - margin : x + margin;
+  const top = rect.bottom > window.innerHeight - margin ? y - rect.height - margin : y + margin;
+  popup.style.left = `${Math.max(margin, left)}px`;
+  popup.style.top = `${Math.max(margin, top)}px`;
 }
 
 function renderDialogContent(circuit) {
@@ -2030,6 +2215,19 @@ function buildPhaseCurrents(circuit) {
     formatPoint(points.ia, "A"),
     formatPoint(points.ib, "A"),
     formatPoint(points.ic, "A"),
+  ];
+}
+
+function buildPhaseVoltages(circuit) {
+  const meterRealtime = circuit.meter ? realtimeByMeter.get(circuit.meter) : null;
+  if (!meterRealtime) {
+    return ["--.--V", "--.--V", "--.--V"];
+  }
+  const points = meterRealtime.points ?? {};
+  return [
+    formatPoint(points.ua, "V"),
+    formatPoint(points.ub, "V"),
+    formatPoint(points.uc, "V"),
   ];
 }
 

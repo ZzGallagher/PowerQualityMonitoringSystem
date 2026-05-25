@@ -126,6 +126,25 @@ CREATE TABLE IF NOT EXISTS point_mapping (
     UNIQUE (meter_id, point_code)
 );
 
+CREATE TABLE IF NOT EXISTS circuit_switch_mapping (
+    id TEXT PRIMARY KEY,
+    station_id TEXT NOT NULL,
+    circuit_id TEXT NOT NULL,
+    cabinet_id TEXT,
+    meter_id TEXT NOT NULL,
+    point_code TEXT NOT NULL,
+    bit_mask INTEGER,
+    closed_value REAL DEFAULT 1,
+    display_name TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (station_id) REFERENCES station(id),
+    FOREIGN KEY (circuit_id) REFERENCES circuit(id),
+    FOREIGN KEY (cabinet_id) REFERENCES cabinet(id),
+    FOREIGN KEY (meter_id) REFERENCES meter(id),
+    FOREIGN KEY (point_code) REFERENCES point_dictionary(code),
+    UNIQUE (circuit_id, meter_id, point_code, bit_mask)
+);
+
 CREATE TABLE IF NOT EXISTS ingest_packet (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     protocol_version TEXT NOT NULL,

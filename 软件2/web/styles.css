@@ -202,7 +202,9 @@ h1 {
 }
 
 .topology-panel,
-.placeholder-card {
+.placeholder-card,
+.substation-3d-panel,
+.substation-3d-side {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -443,6 +445,160 @@ h1 {
 
 .current-overlay span {
   display: block;
+}
+
+.substation-3d-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 12px;
+  min-height: calc(100vh - 112px);
+}
+
+.substation-3d-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 640px;
+}
+
+.substation-3d-toolbar .toolbar-actions {
+  gap: 8px;
+}
+
+.substation-3d-viewport {
+  position: relative;
+  min-height: 588px;
+  background: #f6f8fb;
+}
+
+.substation-3d-viewport canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.substation-3d-status {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  z-index: 2;
+  padding: 10px 12px;
+  border: 1px solid rgba(102, 117, 138, 0.28);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--muted);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.substation-3d-status.error {
+  border-color: rgba(194, 65, 12, 0.3);
+  background: rgba(255, 247, 237, 0.95);
+  color: var(--danger);
+}
+
+.substation-3d-side {
+  align-self: stretch;
+  padding: 14px;
+}
+
+.substation-3d-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.substation-3d-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.state-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #94a3b8;
+}
+
+.state-dot.closed {
+  background: #10b981;
+}
+
+.state-dot.open {
+  background: #ef4444;
+}
+
+.state-dot.unknown {
+  background: #94a3b8;
+}
+
+.substation-3d-circuit-list {
+  display: grid;
+  gap: 8px;
+}
+
+.substation-3d-circuit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 78px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-left: 4px solid #94a3b8;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.substation-3d-circuit.closed {
+  border-left-color: #10b981;
+}
+
+.substation-3d-circuit.open {
+  border-left-color: #ef4444;
+}
+
+.substation-3d-circuit strong,
+.substation-3d-circuit span {
+  display: block;
+}
+
+.substation-3d-circuit strong {
+  font-size: 14px;
+}
+
+.substation-3d-circuit span {
+  margin-top: 6px;
+  color: var(--muted);
+  font-family: Consolas, "Microsoft YaHei UI", monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.substation-3d-circuit em {
+  flex: 0 0 auto;
+  min-width: 44px;
+  color: var(--muted);
+  font-style: normal;
+  font-size: 13px;
+  text-align: right;
+}
+
+.substation-3d-circuit.closed em {
+  color: var(--good);
+}
+
+.substation-3d-circuit.open em {
+  color: var(--danger);
 }
 
 .hotspot {
@@ -943,6 +1099,62 @@ h1 {
 
 .circuit-dialog::backdrop {
   background: rgba(15, 23, 42, 0.38);
+}
+
+.substation-3d-hover-popup {
+  position: fixed;
+  z-index: 55;
+  width: min(360px, calc(100vw - 28px));
+  max-height: min(420px, calc(100vh - 28px));
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--text);
+  box-shadow: 0 18px 52px rgba(11, 18, 30, 0.24);
+  pointer-events: none;
+}
+
+.substation-3d-hover-popup[hidden] {
+  display: none;
+}
+
+.substation-3d-hover-popup .dialog-header {
+  padding: 14px 16px 12px;
+}
+
+.substation-3d-hover-popup .dialog-header h2 {
+  font-size: 16px;
+}
+
+.substation-3d-hover-popup .dialog-body {
+  gap: 10px;
+  padding: 12px 16px 16px;
+}
+
+.substation-3d-hover-summary {
+  display: grid;
+  gap: 8px;
+}
+
+.substation-3d-hover-row {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 10px;
+  background: #fbfdff;
+}
+
+.substation-3d-hover-row span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.substation-3d-hover-row strong {
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .close-button {
